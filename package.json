@@ -1,0 +1,33 @@
+{
+  "name": "neoterm",
+  "version": "0.1.0",
+  "description": "Agentes persistentes com identidade, rotinas e grupos, no terminal, usando o Claude Code do seu plano.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "neoterm": "./bin/neoterm.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "neoterm": "node src/cli/main.ts",
+    "daemon": "node src/cli/main.ts daemon",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.11",
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4.13.22",
+    "postgres": "^4.1.1",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.10",
+    "drizzle-kit": "^0.31.11",
+    "typescript": "^7.0.2"
+  }
+}
