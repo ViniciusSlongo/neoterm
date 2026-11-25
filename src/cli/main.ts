@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { AGENT_FILE } from "../agents/identity.ts";
+import { absolutePath } from "../config.ts";
 import type { MessageMeta, MessagePart } from "../db/schema.ts";
 import type { NeotermEvent, TurnEvent } from "../events.ts";
 import type { NeotermState } from "../state.ts";
@@ -18,7 +19,7 @@ const HELP = `${bold("neoterm")} ${muted("· agentes no terminal, com o Claude C
 
 ${muted("agentes")}
   neoterm agents
-  neoterm agent new <nome> [--name <nome>] [--title <título>] [--role <função>] [--model <modelo>]
+  neoterm agent new <nome> --folder <pasta> [--folder <outra>] [--title <título>] [--role <função>] [--model <modelo>]
   neoterm agent pause|resume <nome>
   neoterm agent reset <nome> [--yes]    recomeça do zero (conversas, rotinas, memória)
   neoterm agent delete <nome> [--yes]   manda para ~/.neoterm/trash
@@ -139,6 +140,7 @@ async function agentCommand(args: string[]): Promise<number> {
       title: { type: "string" },
       role: { type: "string" },
       model: { type: "string" },
+      folder: { type: "string", multiple: true },
       yes: { type: "boolean", short: "y" },
     },
   });
@@ -149,12 +151,17 @@ async function agentCommand(args: string[]): Promise<number> {
   }
   switch (action) {
     case "new": {
-      const { yes: _yes, ...fields } = values;
-      const response = await post("/agents", { slug, ...fields });
-      const { agent } = (await response.json()) as { agent: { slug: string; dir: string; workspace: string } };
+      const { yes: _yes, folder, ...fields } = values;
+      if (!folder || folder.length === 0) {
+        console.error(fail("falta --folder <pasta>: as pastas do computador em que o agente trabalha (--folder . é a pasta atual)"));
+        return 1;
+      }
+      // O motor não sabe de qual pasta você rodou o comando: o caminho vai completo.
+      const response = await post("/agents", { slug, ...fields, folders: folder.map((path) => absolutePath(path)) });
+      const { agent } = (await response.json()) as { agent: { slug: string; dir: string; folders: string[] } };
       console.log(ok(`agente ${bold(agent.slug)} criado`));
-      console.log(muted(`  função e escopo: ${join(agent.dir, AGENT_FILE)}`));
-      console.log(muted(`  pasta de trabalho: ${agent.workspace}`));
+      for (const path of agent.folders) console.log(muted(`  pasta: ${path}`));
+      console.log(muted(`  função: ${join(agent.dir, AGENT_FILE)}`));
       if (!values.role) console.log(`\n  Escreva a função dele no ${AGENT_FILE} antes de conversar.`);
       return 0;
     }
@@ -386,7 +393,7 @@ async function groupCommand(args: string[]): Promise<number> {
     }
     await post("/groups", {
       slug,
-      folder: values.folder,
+      folder: absolutePath(values.folder),
       members: values.members.split(",").map((member) => member.trim()).filter(Boolean),
       ...(values.coordinator ? { coordinator: values.coordinator } : {}),
       ...(values.objective ? { objective: values.objective } : {}),

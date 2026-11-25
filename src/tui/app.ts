@@ -155,7 +155,8 @@ function useDebounced(callback: () => void, ms: number): () => void {
   }, [ms]);
 }
 
-export function App({ api }: { api: NeotermApi }): ReactNode {
+/** `cwd`: de onde a interface foi aberta; um caminho relativo digitado num formulário parte dela. */
+export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: string }): ReactNode {
   const { exit } = useApp();
   const size = useWindowSize();
   const columns = size.columns || 100;
@@ -344,7 +345,7 @@ export function App({ api }: { api: NeotermApi }): ReactNode {
       newAgentForm(api, (slug) => {
         wantSelect.current = { kind: "agent", slug };
         say(`agente ${slug} criado`);
-      }),
+      }, cwd),
     );
   const openGroupForm = () => {
     if (agentNames.length === 0) return say("crie um agente antes");
@@ -352,7 +353,7 @@ export function App({ api }: { api: NeotermApi }): ReactNode {
       newGroupForm(api, agentNames, (slug) => {
         wantSelect.current = { kind: "group", slug };
         say(`grupo #${slug} criado`);
-      }),
+      }, cwd),
     );
   };
   const openRoutineForm = () => {
@@ -451,7 +452,6 @@ export function App({ api }: { api: NeotermApi }): ReactNode {
 
   const handleAttention = (input: string, key: InkKey) => {
     if (!attentionItem) return;
-    if (input === "s" && attentionItem.kind === "access") return run(api.allow(attentionItem.id), `${attentionItem.tool} liberado para ${attentionItem.agent}`);
     if (input === "x") return run(api.dismiss(attentionItem.id), "dispensado");
     if (key.return) {
       const target: Item | undefined = attentionItem.group
@@ -612,6 +612,13 @@ export function App({ api }: { api: NeotermApi }): ReactNode {
       null,
       h(Text, { bold: true }, mode === "routines" ? `rotinas · ${agentState.slug}` : agentState.slug),
       agentState.title ? h(Text, { color: theme.muted }, ` · ${agentState.title}`) : null,
+      agentState.folders[0]
+        ? h(
+            Text,
+            { color: theme.muted },
+            ` · ${agentState.folders[0].replace(homedir(), "~")}${agentState.folders.length > 1 ? ` +${agentState.folders.length - 1}` : ""}`,
+          )
+        : null,
     );
     headerRight =
       agentState.state === "running"
@@ -637,14 +644,11 @@ export function App({ api }: { api: NeotermApi }): ReactNode {
   if (mode === "form" && form) {
     body = h(Box, { flexDirection: "column", paddingTop: 1 }, renderForm(form));
   } else if (mode === "attention" && attentionItem) {
-    const actions =
-      attentionItem.kind === "access"
-        ? `s libera ${attentionItem.tool} para ${attentionItem.agent} (com você e sozinho) · x dispensa`
-        : attentionItem.group
-          ? `enter abre #${attentionItem.group} · x dispensa`
-          : attentionItem.routineId
-            ? "enter abre as rotinas · x dispensa"
-            : "x dispensa";
+    const actions = attentionItem.group
+      ? `enter abre #${attentionItem.group} · x dispensa`
+      : attentionItem.routineId
+        ? "enter abre as rotinas · x dispensa"
+        : "x dispensa";
     body = h(
       Box,
       { flexDirection: "column", paddingTop: 1 },
@@ -731,7 +735,7 @@ export function App({ api }: { api: NeotermApi }): ReactNode {
       Box,
       { flexDirection: "column", paddingTop: 1 },
       h(Text, { bold: true }, "Nenhum agente ainda."),
-      h(Text, { color: theme.muted }, "Aperte n para criar o primeiro: nome, função e escopo."),
+      h(Text, { color: theme.muted }, "Aperte n para criar o primeiro: nome, função e pastas."),
     );
   } else {
     body = h(Box, { paddingTop: 1 }, h(Text, { color: theme.muted }, "Escolha um agente ou grupo na lateral."));

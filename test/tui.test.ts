@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { render } from "ink-testing-library";
 import { createElement as h } from "react";
-import { makeAgent, ROOT, setScript, startNeoterm, type TestNeoterm, waitFor } from "./harness.ts";
+import { makeAgent, makeFolder, ROOT, setScript, startNeoterm, type TestNeoterm, waitFor } from "./harness.ts";
 
 const { App } = await import("../src/tui/app.ts");
 const { httpApi } = await import("../src/tui/api.ts");
@@ -25,6 +26,7 @@ const KEY = {
 };
 
 let t: TestNeoterm;
+let OPENED_IN = "";
 let ui: ReturnType<typeof render>;
 const frame = () => ui.lastFrame() ?? "";
 const press = async (...keys: string[]) => {
@@ -46,7 +48,10 @@ before(async () => {
   t = await startNeoterm();
   await makeAgent("analista", { title: "Acompanhamento financeiro" });
   await makeAgent("dev", { title: "Implementação" });
-  ui = render(h(App, { api: httpApi(t.base) }));
+  // A interface aberta numa pasta: um caminho relativo no formulário parte dela.
+  OPENED_IN = makeFolder("aberto-aqui");
+  makeFolder("aberto-aqui/codigo");
+  ui = render(h(App, { api: httpApi(t.base), cwd: OPENED_IN }));
   await seen("AGENTES");
 });
 after(async () => {
@@ -94,10 +99,13 @@ describe("a interface", () => {
     await type("Revisão de código");
     await press(KEY.tab);
     await type("Revisa o código antes de cada entrega.");
+    await press(KEY.tab);
+    await type("codigo, ~");
     await press(KEY.ctrlS);
     await seen(/○ revisor/);
-    const { status } = await t.api("/agents/revisor");
+    const { status, body } = await t.api<{ agent: { folders: string[] } }>("/agents/revisor");
     assert.equal(status, 200);
+    assert.deepEqual(body.agent.folders, [realpathSync(join(OPENED_IN, "codigo")), realpathSync(homedir())]);
   });
 
   it("pausa e retoma pela lateral", async () => {
@@ -150,10 +158,13 @@ describe("a interface", () => {
     await press(KEY.escape);
   });
 
-  it("mostra o que precisa de você e libera um acesso", async () => {
-    await t.neoterm.chat("dev", '!mcp request_access {"tool":"Bash","reason":"rodar o build"}');
+  it("mostra o que precisa de você", async () => {
+    const created = await t.api<{ routine: { id: string } }>("/routines", {
+      body: { agent: "dev", title: "quebra", instruction: "!falhar sem acesso ao servidor", cron: "0 9 * * *" },
+    });
+    await t.api(`/routines/${created.body.routine.id}/run`, { body: {} });
     await seen("PRECISA DE VOCÊ");
-    await seen(/! dev quer usar Bash/);
+    await seen(/! rotina quebra falhou/);
   });
 });
 

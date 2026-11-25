@@ -57,17 +57,24 @@ export async function startNeoterm(options: { now?: () => Date } = {}) {
   };
 }
 
-export async function makeAgent(slug: string, extra: { name?: string; title?: string; role?: string; header?: string } = {}) {
+/** Uma pasta do "computador" para o escopo de um agente. */
+export function makeFolder(name: string): string {
+  const repo = join(ROOT, "repos", name);
+  mkdirSync(repo, { recursive: true });
+  return repo;
+}
+
+export async function makeAgent(
+  slug: string,
+  extra: { name?: string; title?: string; role?: string; folders?: string[] } = {},
+) {
   await createAgent({
     slug,
+    folders: extra.folders ?? [makeFolder(slug)],
     name: extra.name ?? slug,
     title: extra.title ?? `Agente ${slug}`,
     role: extra.role ?? `Você é o agente ${slug} de teste.`,
   });
-  if (extra.header) {
-    const path = join(HOME, "agents", slug, "AGENT.md");
-    writeFileSync(path, readFileSync(path, "utf8").replace("folders: []", `folders: []\n${extra.header}`));
-  }
 }
 
 export function setScript(script: Record<string, string | string[]>): void {

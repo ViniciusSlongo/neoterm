@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
@@ -50,6 +50,17 @@ export async function writeFileAtomic(path: string, content: string): Promise<vo
   const temporary = `${path}.${process.pid}.tmp`;
   await writeFile(temporary, content, "utf8");
   await rename(temporary, path);
+}
+
+/**
+ * Um caminho que a pessoa digitou, completo. Quem chama é o CLI ou a interface, que sabem de qual
+ * pasta a pessoa está falando; o motor roda em outra (pelo launchd, em ~/.neoterm).
+ */
+export function absolutePath(path: string, cwd = process.cwd()): string {
+  const trimmed = path.trim();
+  if (trimmed === "~") return homedir();
+  if (trimmed.startsWith("~/")) return join(homedir(), trimmed.slice(2));
+  return resolve(cwd, trimmed);
 }
 
 export function isMissingFile(error: unknown): boolean {

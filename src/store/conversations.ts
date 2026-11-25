@@ -83,7 +83,7 @@ export function memberSession(db: Database, groupId: string, agentId: string, cu
 }
 
 /**
- * Os avisos do neoterm (acesso liberado, rotina que falhou) desde a última resposta do agente,
+ * Os avisos do neoterm (uma rotina que falhou, por exemplo) desde a última resposta do agente,
  * prontos para abrir o próximo turno. Ditos na conversa, e não só no prompt de sistema, porque o
  * agente confia mais no que leu na conversa do que numa instrução que mudou.
  */

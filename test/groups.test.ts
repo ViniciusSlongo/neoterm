@@ -98,7 +98,7 @@ describe("um grupo trabalhando", () => {
     const lastArquiteto = calls.filter((call) => call.agent === "arquiteto").at(-1)!;
     assert.doesNotMatch(lastArquiteto.prompt, /precisamos de filtro/, "não relê o que já tinha visto");
     assert.match(lastArquiteto.prompt, /\[revisor · \d\d:\d\d\] Revisado e aprovado/);
-    assert.equal(argOf(devCall, "--tools"), "Read,Glob,Grep,Write,Edit,Bash,WebSearch,WebFetch", "a pessoa começou: escopo com você");
+    assert.match(devCall.system, /A pessoa está acompanhando/, "a pessoa começou: tem alguém por perto");
   });
 
   it("@nome da pessoa chama direto quem ela quer", async () => {
@@ -164,7 +164,7 @@ describe("um grupo trabalhando", () => {
       ["agent", "dev"],
     ]);
     const devCall = fakeCalls().filter((call) => call.agent === "dev").at(-1)!;
-    assert.equal(argOf(devCall, "--tools"), "Read,Glob,Grep,WebSearch,WebFetch", "começou por rotina: escopo sozinho");
+    assert.match(devCall.system, /Ninguém está acompanhando/, "começou por rotina: sozinho");
   });
 
   it("recusa grupo com agente que não existe e nome repetido", async () => {

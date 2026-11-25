@@ -98,7 +98,6 @@ describe("o relógio", () => {
     assert.deepEqual(body.messages.map((message) => message.author), ["routine", "agent"]);
     assert.equal(body.messages[0]?.meta.routineTitle, "resumo");
     const call = fakeCalls().filter((entry) => entry.agent === "Relógio").at(-1)!;
-    assert.equal(argOf(call, "--tools"), "Read,Glob,Grep,WebSearch,WebFetch", "sozinho usa o escopo de rotinas");
     assert.match(call.system, /Ninguém está acompanhando/);
     assert.match(call.prompt, /^\[Rotina resumo · todo dia 09:00\]/);
     const next = (await routineRow(routine.id)).nextRunAt;
@@ -115,18 +114,16 @@ describe("o relógio", () => {
     assert.ok((await routineRow(routine.id)).nextRunAt.getTime() > Date.now());
   });
 
-  it("uma rotina que só avisa roda só com ferramentas de leitura", async () => {
-    const { grantTool } = await import("../src/agents/identity.ts");
-    await grantTool("relogio", "Bash");
+  it("uma rotina que só avisa diz ao agente para não mudar nada", async () => {
     const acting = await newRoutine("relogio", "age", "faça");
     await t.neoterm.routines.fire(await routineRow(acting.id));
     let call = fakeCalls().filter((entry) => entry.agent === "Relógio").at(-1)!;
-    assert.equal(argOf(call, "--tools"), "Read,Glob,Grep,WebSearch,WebFetch,Bash", "com Bash liberado para rotinas");
+    assert.doesNotMatch(call.system, /só avisa/);
     const routine = await newRoutine("relogio", "aviso", "verifique", { mode: "notify" });
     await t.neoterm.routines.fire(await routineRow(routine.id));
     call = fakeCalls().filter((entry) => entry.agent === "Relógio").at(-1)!;
-    assert.equal(argOf(call, "--tools"), "Read,Glob,Grep,WebSearch,WebFetch", "só avisa: sem Bash");
-    assert.match(call.system, /só avisa/);
+    assert.match(call.system, /Esta execução só avisa: leia, verifique e informe, sem mudar nada\./);
+    assert.match(call.prompt, /Esta rotina só avisa/);
   });
 
   it("agente pausado: a rotina é pulada e não conta como falha", async () => {
@@ -224,7 +221,7 @@ describe("ferramentas do neoterm dentro de um turno", () => {
     });
     const call = fakeCalls().filter((entry) => entry.agent === "Ferramentas").at(-1)!;
     assert.match(call.prompt, /\[Retorno que você agendou\]\nMotivo: conferir o build/);
-    assert.equal(argOf(call, "--tools"), "Read,Glob,Grep,WebSearch,WebFetch");
+    assert.match(call.system, /Ninguém está acompanhando/);
   });
 
   it("recusa retorno fora dos limites", async () => {

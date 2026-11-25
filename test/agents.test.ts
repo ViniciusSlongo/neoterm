@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { argOf, FAKE_STATE, fakeCalls, HOME, makeAgent, startNeoterm, type TestNeoterm, waitFor } from "./harness.ts";
+import { argOf, FAKE_STATE, fakeCalls, HOME, makeAgent, makeFolder, ROOT, startNeoterm, type TestNeoterm, waitFor } from "./harness.ts";
 
 let t: TestNeoterm;
 before(async () => {
@@ -33,15 +33,15 @@ describe("conversa com um agente", () => {
     );
   });
 
-  it("roda com a identidade, o escopo com você e as ferramentas do neoterm", () => {
+  it("roda com a identidade, sem pedir permissão e com as ferramentas do neoterm", () => {
     const call = lastCall("Ana");
     assert.match(call.system, /<identity>\nVocê é Ana, Pesquisa\./);
     assert.match(call.system, /A pessoa está acompanhando/);
-    assert.equal(argOf(call, "--tools"), "Read,Glob,Grep,Write,Edit,Bash,WebSearch,WebFetch");
-    assert.ok(call.args.includes("mcp__neoterm"), "ferramentas do neoterm liberadas");
+    assert.ok(call.args.includes("--dangerously-skip-permissions"));
+    assert.ok(!call.args.includes("--tools"), "todas as ferramentas");
     assert.match(argOf(call, "--mcp-config") ?? "", /"Authorization":"Bearer [0-9a-f]{48}"/);
     assert.equal(argOf(call, "--resume") !== undefined, true);
-    assert.ok(call.cwd.endsWith(join("agents", "ana", "workspace")));
+    assert.equal(call.cwd, realpathSync(join(ROOT, "repos", "ana")), "roda na pasta dele");
   });
 
   it("guarda o que o agente fez no caminho, inclusive o que foi negado", async () => {
@@ -116,6 +116,79 @@ describe("conversa com um agente", () => {
   });
 });
 
+describe("pastas do escopo", () => {
+  it("criar exige pelo menos uma pasta, e ela tem que existir", async () => {
+    const missing = await t.api("/agents", { body: { slug: "sempasta", role: "x" } });
+    assert.equal(missing.status, 400);
+    assert.match(String(missing.body.error), /escolha pelo menos uma pasta/);
+    const empty = await t.api("/agents", { body: { slug: "vazio", role: "x", folders: [] } });
+    assert.equal(empty.status, 422);
+    assert.match(String(empty.body.error), /escolha pelo menos uma pasta/);
+    const ghost = await t.api("/agents", { body: { slug: "fantasma", role: "x", folders: [join(ROOT, "nao-existe")] } });
+    assert.equal(ghost.status, 422);
+    assert.match(String(ghost.body.error), /não existe/);
+    const relative = await t.api("/agents", { body: { slug: "relativo", role: "x", folders: ["pastas/x"] } });
+    assert.equal(relative.status, 422);
+    assert.match(String(relative.body.error), /caminho completo/);
+    assert.ok(!existsSync(join(HOME, "agents", "fantasma")), "recusado não deixa pasta para trás");
+  });
+
+  it("cria com as pastas, grava no AGENT.md e roda na primeira", async () => {
+    const crm = makeFolder("crm");
+    const docs = makeFolder("docs");
+    const created = await t.api<{ agent: { workspace: string } }>("/agents", {
+      body: { slug: "dev", role: "Programa o CRM.", folders: [crm, docs] },
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.agent.workspace, realpathSync(crm));
+    const file = readFileSync(join(HOME, "agents", "dev", "AGENT.md"), "utf8");
+    assert.match(file, new RegExp(`folders:\\n  - "${realpathSync(crm)}"\\n  - "${realpathSync(docs)}"\\n---`));
+    assert.ok(!existsSync(join(HOME, "agents", "dev", "workspace")), "sem workspace/ quando tem pastas");
+    await t.neoterm.chat("dev", "oi");
+    const call = lastCall("dev");
+    assert.equal(call.cwd, realpathSync(crm));
+    assert.equal(argOf(call, "--add-dir"), realpathSync(docs));
+    const state = await t.neoterm.state();
+    assert.deepEqual(state.agents.find((agent) => agent.slug === "dev")?.folders, [realpathSync(crm), realpathSync(docs)]);
+  });
+
+  it("se uma pasta sumir, o agente vira um problema, sem derrubar os outros", async () => {
+    const folder = makeFolder("temporaria");
+    await makeAgent("efemero", { folders: [folder] });
+    rmSync(folder, { recursive: true });
+    const state = await t.neoterm.state();
+    assert.match(state.problems.find((problem) => problem.slug === "efemero")?.error ?? "", /não existe mais/);
+    assert.ok(state.agents.some((agent) => agent.slug === "ana"));
+    mkdirSync(folder);
+  });
+
+  it("num grupo, roda na pasta do projeto e leva as pastas dele junto", async () => {
+    await makeAgent("front", { folders: [makeFolder("web")] });
+    const folder = makeFolder("projeto-grupo");
+    const created = await t.api("/groups", { body: { slug: "lancamento", folder, members: ["front"] } });
+    assert.equal(created.status, 201);
+    await t.api("/groups/lancamento/messages", { body: { text: "começa" } });
+    await waitFor(() => fakeCalls().some((call) => call.agent === "front"));
+    const call = lastCall("front");
+    assert.equal(call.cwd, realpathSync(folder));
+    assert.equal(argOf(call, "--add-dir"), realpathSync(join(ROOT, "repos", "web")));
+  });
+
+  it("excluir o agente não mexe nas pastas dele", async () => {
+    const folder = makeFolder("intocavel");
+    writeFileSync(join(folder, "codigo.ts"), "export {}");
+    await makeAgent("passageiro", { folders: [folder] });
+    await t.api("/agents/passageiro", { method: "DELETE", body: { confirm: true } });
+    assert.ok(existsSync(join(folder, "codigo.ts")));
+  });
+
+  it("um grupo não aceita pasta relativa: o motor não sabe de onde ela é", async () => {
+    const response = await t.api("/groups", { body: { slug: "relativo", folder: "algum/lugar", members: ["ana"] } });
+    assert.equal(response.status, 422);
+    assert.match(String(response.body.error), /caminho completo/);
+  });
+});
+
 describe("ciclo de vida", () => {
   it("pausa e retoma", async () => {
     await makeAgent("pausavel");
@@ -159,33 +232,23 @@ describe("ciclo de vida", () => {
 });
 
 describe("AGENT.md", () => {
+  it("lê o AGENT.md do jeito antigo, com ferramentas e pastas em objeto", async () => {
+    await makeAgent("antigo");
+    const folder = makeFolder("antigo-dados");
+    writeFileSync(
+      join(HOME, "agents", "antigo", "AGENT.md"),
+      `---\nname: Antigo\ntools: [Read]\nunattended: [Read]\nfolders:\n  - path: ${folder}\n    write: false\n---\nFaz coisas.`,
+    );
+    const { body } = await t.api<{ agent: { folders: string[] } }>("/agents/antigo");
+    assert.deepEqual(body.agent.folders, [realpathSync(folder)]);
+  });
+
   it("um AGENT.md quebrado aparece como problema, sem derrubar a lista", async () => {
     await makeAgent("quebrado");
     writeFileSync(join(HOME, "agents", "quebrado", "AGENT.md"), "---\nname: [\n---\nx");
     const state = await t.neoterm.state();
     assert.ok(state.problems.some((problem) => problem.slug === "quebrado"));
     rmSync(join(HOME, "agents", "quebrado"), { recursive: true });
-  });
-
-  it("liberar um pedido de acesso edita o AGENT.md sem perder os comentários", async () => {
-    await makeAgent("pede");
-    await t.neoterm.chat("pede", '!mcp request_access {"tool":"Bash","reason":"rodar o script de vencimentos"}');
-    const state = await t.neoterm.state();
-    const item = state.attention.find((entry) => entry.kind === "access" && entry.agent === "pede");
-    assert.ok(item);
-    assert.match(item.text, /pede quer usar Bash: rodar o script/);
-    const allowed = await t.api(`/attention/${item.id}/allow`, { body: {} });
-    assert.equal(allowed.status, 200);
-    const file = readFileSync(join(HOME, "agents", "pede", "AGENT.md"), "utf8");
-    assert.match(file, /unattended: \[ Read, Glob, Grep, WebSearch, WebFetch, Bash \]/);
-    assert.match(file, /# Escopo sozinho, em rotinas/);
-    assert.equal((await t.neoterm.state()).attention.some((entry) => entry.id === item.id), false);
-    // O agente fica sabendo na conversa, no próximo turno, e só uma vez.
-    await t.neoterm.chat("pede", "pode rodar agora?");
-    assert.match(fakeCalls().at(-1)!.prompt, /^\[Avisos do neoterm desde a sua última resposta\]\n- A pessoa liberou Bash para pede, também quando roda sozinho\.\n\npode rodar agora\?$/);
-    assert.match(argOf(fakeCalls().at(-1)!, "--append-system-prompt") ?? "", /ferramentas de trabalho: .*Bash/);
-    await t.neoterm.chat("pede", "e agora?");
-    assert.equal(fakeCalls().at(-1)!.prompt, "e agora?");
   });
 });
 

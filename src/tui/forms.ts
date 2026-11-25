@@ -1,11 +1,10 @@
-import { DEFAULT_TOOLS, DEFAULT_UNATTENDED_TOOLS } from "../agents/identity.ts";
+import { absolutePath } from "../config.ts";
 import { describeCron, describeWhen, nextOccurrence, validateSchedule } from "../routines/schedule.ts";
 import type { NeotermApi, ViewScope } from "./api.ts";
 import type { FormState, Values } from "./form.ts";
 
 /* Os três formulários das telas: novo agente, novo grupo e nova rotina. */
 
-const TOOL_OPTIONS = ["Read", "Glob", "Grep", "Write", "Edit", "Bash", "WebSearch", "WebFetch"].map((tool) => ({ value: tool, label: tool }));
 const MODELS = [
   { value: "", label: "padrão" },
   { value: "claude-opus-5-5", label: "opus" },
@@ -16,7 +15,7 @@ const MODELS = [
 const text = (values: Values, key: string) => String(values[key] ?? "").trim();
 const list = (values: Values, key: string) => (Array.isArray(values[key]) ? (values[key] as string[]) : []);
 
-export function newAgentForm(api: NeotermApi, done: (slug: string) => void): FormState {
+export function newAgentForm(api: NeotermApi, done: (slug: string) => void, cwd = process.cwd()): FormState {
   return {
     title: "novo agente",
     subtitle: "vira ~/.neoterm/agents/<nome>/AGENT.md",
@@ -33,35 +32,25 @@ export function newAgentForm(api: NeotermApi, done: (slug: string) => void): For
         hint: "dá para detalhar depois no AGENT.md",
       },
       {
-        key: "tools",
-        label: "Com você",
-        kind: "multi",
-        value: [...DEFAULT_TOOLS],
-        options: TOOL_OPTIONS,
-        cursor: 0,
-        hint: "←→ escolhe · espaço marca · o que ele pode usar com você por perto",
-      },
-      {
-        key: "unattended",
-        label: "Sozinho",
-        kind: "multi",
-        value: [...DEFAULT_UNATTENDED_TOOLS],
-        options: TOOL_OPTIONS,
-        cursor: 0,
-        hint: "o que ele pode usar em rotinas, sem ninguém olhando",
+        key: "folders",
+        label: "Pastas",
+        kind: "text",
+        value: "",
+        placeholder: "~/Projects/crm, ~/Documents/notas",
+        hint: "o escopo dele: só trabalha nestas pastas do computador · separe com vírgula",
       },
       { key: "model", label: "Modelo", kind: "choice", value: "", options: MODELS },
     ],
     submit: async (values) => {
       const slug = text(values, "slug");
       if (!text(values, "role")) throw new Error("escreva a função dele");
-      const tools = list(values, "tools");
+      const paths = text(values, "folders").split(",").map((path) => path.trim()).filter(Boolean);
+      if (paths.length === 0) throw new Error("diga pelo menos uma pasta: o escopo dele");
       await api.createAgent({
         slug,
+        folders: paths.map((path) => absolutePath(path, cwd)),
         title: text(values, "title"),
         role: text(values, "role"),
-        tools,
-        unattended: list(values, "unattended").filter((tool) => tools.includes(tool)),
         ...(text(values, "model") ? { model: text(values, "model") } : {}),
       });
       done(slug);
@@ -69,7 +58,7 @@ export function newAgentForm(api: NeotermApi, done: (slug: string) => void): For
   };
 }
 
-export function newGroupForm(api: NeotermApi, agents: string[], done: (slug: string) => void): FormState {
+export function newGroupForm(api: NeotermApi, agents: string[], done: (slug: string) => void, cwd = process.cwd()): FormState {
   return {
     title: "novo grupo",
     subtitle: "agentes trabalhando juntos num projeto",
@@ -95,7 +84,7 @@ export function newGroupForm(api: NeotermApi, agents: string[], done: (slug: str
       const slug = text(values, "slug");
       await api.createGroup({
         slug,
-        folder: text(values, "folder"),
+        folder: absolutePath(text(values, "folder"), cwd),
         members,
         ...(text(values, "objective") ? { objective: text(values, "objective") } : {}),
       });
@@ -192,7 +181,7 @@ export function newRoutineForm(
         { value: "act", label: "agir" },
         { value: "notify", label: "só me avisar" },
       ],
-      hint: "agir: dentro do escopo sozinho · só avisar: lê e informa, sem mudar nada",
+      hint: "agir: faz o que a rotina pede · só avisar: verifica e informa, sem mudar nada",
     },
     { key: "title", label: "Nome", kind: "text", value: "", placeholder: "resumo-diario" },
   );

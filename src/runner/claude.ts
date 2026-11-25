@@ -7,10 +7,9 @@ import { CLAUDE_BIN } from "../config.ts";
  * Um turno de um agente é uma execução do Claude Code oficial em modo não interativo (`claude -p`),
  * com o login que a pessoa já fez nele. O neoterm nunca toca em senha ou token.
  *
- * O ESCOPO É `--tools`, NÃO `--allowedTools`. `--tools` decide quais ferramentas existem na sessão;
- * a lista de liberadas só decide o que roda sem perguntar, e o Claude Code libera sozinho comandos
- * de leitura (um `date` roda mesmo sem Bash liberado). Então o que o agente não pode usar, ele
- * nem tem.
+ * SEM PERMISSÕES: os agentes rodam com `--dangerously-skip-permissions`, como a pessoa rodaria o
+ * Claude Code. Têm todas as ferramentas e nada pede confirmação. O escopo são as pastas: ele roda
+ * na primeira, as outras entram com `--add-dir`, e o prompt diz para trabalhar só nelas.
  */
 
 export type ClaudeTurn = {
@@ -18,10 +17,6 @@ export type ClaudeTurn = {
   cwd: string;
   model: string;
   systemPrompt: string;
-  /** As ferramentas que existem nesta sessão, todas liberadas. */
-  tools: readonly string[];
-  /** Regras que recusam dentro delas, como editar numa pasta só de leitura. */
-  disallowed: readonly string[];
   addDirs: readonly string[];
   sessionId: string;
   /** Continuar a sessão `sessionId` em vez de começá-la. */
@@ -72,21 +67,17 @@ export function claudeArgs(turn: ClaudeTurn): string[] {
     turn.systemPrompt,
     // Por padrão o Claude Code grava o prompt de sistema na primeira mensagem e o reusa em toda
     // continuação, mesmo que depois venha outro texto. O neoterm monta o prompt a cada turno (o
-    // AGENT.md editado, a memória nova, se é rotina ou conversa, as ferramentas desta execução),
-    // então ele precisa ser lido de novo a cada vez.
+    // AGENT.md editado, a memória nova, se é rotina ou conversa), então ele precisa ser lido de novo
+    // a cada vez.
     "--system-prompt-snapshot",
     "off",
-    "--tools",
-    turn.tools.join(","),
-    // Ninguém responde pedidos de permissão: o que precisaria perguntar é negado na hora.
-    "--permission-prompts",
-    "none",
-    // Sem hooks, plugins e servidores MCP da pessoa: o agente tem só o que o AGENT.md dá.
+    "--dangerously-skip-permissions",
+    // Sem os hooks, plugins e servidores MCP da sua configuração pessoal. A configuração da pasta
+    // (o CLAUDE.md e o .claude/ do projeto) vale, como valeria para você ali.
     "--setting-sources",
     "project",
     "--strict-mcp-config",
   ];
-  const allowed = [...turn.tools];
   if (turn.mcp) {
     args.push(
       "--mcp-config",
@@ -100,10 +91,7 @@ export function claudeArgs(turn: ClaudeTurn): string[] {
         },
       }),
     );
-    allowed.push(`mcp__${MCP_SERVER_NAME}`);
   }
-  if (allowed.length > 0) args.push("--allowedTools", ...allowed);
-  if (turn.disallowed.length > 0) args.push("--disallowedTools", ...turn.disallowed);
   for (const dir of turn.addDirs) args.push("--add-dir", dir);
   args.push(turn.resume ? "--resume" : "--session-id", turn.sessionId);
   return args;

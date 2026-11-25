@@ -8,18 +8,15 @@ import {
   AgentNotFound,
   AgentProblem,
   createAgent,
-  DEFAULT_TOOLS,
-  DEFAULT_UNATTENDED_TOOLS,
-  grantTool,
   loadAgent,
 } from "../agents/identity.ts";
 import { planReset, removeAgent, reset, setPaused } from "../agents/lifecycle.ts";
 import { Neoterm } from "../app.ts";
-import { getAttention, resolveAttention } from "../attention.ts";
+import { resolveAttention } from "../attention.ts";
 import { DAEMON_PORT, readSettings } from "../config.ts";
 import { applyMigrations, connect, errorMessage } from "../db/client.ts";
 import type { NeotermEvent, TurnEvent } from "../events.ts";
-import { GroupProblem, addMember, createGroup, deleteGroup, getGroup, listGroups, removeMember } from "../groups/store.ts";
+import { GroupProblem, addMember, createGroup, deleteGroup, getGroup, removeMember } from "../groups/store.ts";
 import { FollowupRefused, cancelFollowup, pendingFollowups } from "../routines/followups.ts";
 import {
   createRoutine,
@@ -31,7 +28,7 @@ import {
 } from "../routines/store.ts";
 import { agentRowById, ensureAgentRow, findAgentRow, lastMessages, mainConversation } from "../store/conversations.ts";
 import { desc, eq } from "drizzle-orm";
-import { messages, runs } from "../db/schema.ts";
+import { runs } from "../db/schema.ts";
 
 /*
  * O motor: um servidor HTTP só em 127.0.0.1, que o CLI e a interface de terminal usam. Ele é o
@@ -49,8 +46,7 @@ const NewAgent = z.object({
   title: z.string().optional(),
   role: z.string().optional(),
   model: z.string().optional(),
-  tools: z.array(z.string()).optional(),
-  unattended: z.array(z.string()).optional(),
+  folders: z.array(z.string(), { error: "escolha pelo menos uma pasta: o escopo onde o agente vai trabalhar" }),
 });
 const NewRoutine = z.object({
   agent: z.string().min(1),
@@ -165,7 +161,7 @@ export function createApp(neoterm: Neoterm): Hono {
   app.get("/agents/:slug", async (c) => {
     const agent = await loadAgent(c.req.param("slug"));
     const row = await ensureAgentRow(db, agent.slug);
-    return c.json({ agent, paused: Boolean(row.pausedAt), defaults: { tools: DEFAULT_TOOLS, unattended: DEFAULT_UNATTENDED_TOOLS } });
+    return c.json({ agent, paused: Boolean(row.pausedAt) });
   });
   app.get("/agents/:slug/messages", async (c) => {
     const agent = await loadAgent(c.req.param("slug"));
@@ -337,25 +333,6 @@ export function createApp(neoterm: Neoterm): Hono {
 
   // Precisa de você
   app.post("/attention/:id/resolve", async (c) => c.json({ ok: await resolveAttention(db, bus, c.req.param("id")) }));
-  app.post("/attention/:id/allow", async (c) => {
-    const item = await getAttention(db, c.req.param("id"));
-    if (!item || item.kind !== "access" || !item.tool || !item.agentId) throw new BadRequest("esse item não é um pedido de acesso");
-    const row = await agentRowById(db, item.agentId);
-    if (!row) throw new BadRequest("o agente não existe mais");
-    await grantTool(row.slug, item.tool);
-    await resolveAttention(db, bus, item.id);
-    // O agente fica sabendo na conversa, no próximo turno (veja withNotices).
-    const conversation = await mainConversation(db, row.id);
-    await db.insert(messages).values({
-      conversationId: conversation.id,
-      author: "system",
-      text: `A pessoa liberou ${item.tool} para ${row.slug}, também quando roda sozinho.`,
-      meta: { notice: "access_granted" },
-    });
-    bus.changed("messages", { kind: "agent", slug: row.slug });
-    bus.changed("agents");
-    return c.json({ ok: true, agent: row.slug, tool: item.tool });
-  });
 
   async function requireRoutine(id: string) {
     const routine = await getRoutine(db, id);

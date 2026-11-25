@@ -1,7 +1,7 @@
 # neoterm
 
-Agentes persistentes no terminal. Cada um tem identidade, função e escopo próprios, roda rotinas
-sozinho e conversa com os colegas em grupos. Tudo roda pelo Claude Code do seu plano.
+Agentes persistentes no terminal. Cada um tem identidade, função e as pastas do computador em que
+trabalha, roda rotinas sozinho e conversa com os colegas em grupos. Tudo roda pelo Claude Code do seu plano.
 Inspirado no [OpenBot](https://github.com/CopilotKit/OpenBot) (MIT).
 
 ## Precisa de
@@ -51,15 +51,15 @@ neoterm daemon              # ou: roda neste terminal, até o ctrl+c
 ## A interface
 
 ```
- AGENTES            │ analista · Acompanhamento financeiro        ○ livre
+ AGENTES            │ analista · Financeiro · ~/Documents/Caixa   ○ livre
  ● analista         │ ──────────────────────────────────────────────────
  ‖ suporte  pausado │ › quanto entrou essa semana?
- GRUPOS             │   ⎿ Read   workspace/extratos/novembro.csv
+ GRUPOS             │   ⎿ Read   extratos/novembro.csv
  # crm              │   Entraram R$ 48.200 em 12 recebimentos.
  ROTINAS HOJE       │
  ✓ 09:00 resumo     │ ╭─────────────────────────────────────────────────╮
  PRECISA DE VOCÊ    │ │ > mensagem para analista · /ajuda               │
- ! analista quer …  │ ╰─────────────────────────────────────────────────╯
+ ! rotina resumo f… │ ╰─────────────────────────────────────────────────╯
 ```
 
 - **Na conversa:** `enter` envia; `esc` vai para a lateral; `↑↓` (sem texto) troca de agente;
@@ -67,13 +67,14 @@ neoterm daemon              # ou: roda neste terminal, até o ctrl+c
 - **Na lateral:** `↑↓` escolhe; `enter` abre; `n` cria um agente; `g` cria um grupo; `r` abre as
   rotinas; `p` pausa ou retoma; `q` sai.
 - **Nas rotinas:** `n` cria; `espaço` liga ou desliga; `x` roda agora; `d d` apaga.
-- **Em "precisa de você":** `s` libera um acesso pedido; `x` dispensa; `enter` abre o assunto.
+- **Em "precisa de você":** `enter` abre o assunto; `x` dispensa.
 
 ## O CLI
 
 ```sh
 neoterm agents
-neoterm agent new analista --title "Acompanhamento financeiro" --role "Acompanha o caixa…"
+neoterm agent new analista --folder ~/Documents/Caixa --folder ~/Downloads/extratos \
+  --title "Acompanhamento financeiro" --role "Acompanha o caixa…"
 neoterm agent pause|resume analista
 neoterm agent reset analista        # mostra o que vai apagar e pede confirmação
 neoterm agent delete analista       # manda para ~/.neoterm/trash
@@ -93,10 +94,9 @@ neoterm attention
 
 | O quê | Onde | Quem escreve |
 | --- | --- | --- |
-| Identidade, função e escopo | `~/.neoterm/agents/<nome>/AGENT.md` | você |
+| Identidade, função e pastas | `~/.neoterm/agents/<nome>/AGENT.md` | você |
 | Memória do agente | `~/.neoterm/agents/<nome>/MEMORY.md` | o agente (`remember`/`forget`) e você |
 | O que todos sabem sobre você | `~/.neoterm/USER.md` | você |
-| Pasta de trabalho | `~/.neoterm/agents/<nome>/workspace/` | o agente |
 | Conversas, execuções, rotinas, grupos, avisos | `~/.neoterm/neoterm.db` (SQLite) | o motor |
 | Agentes excluídos | `~/.neoterm/trash/` | o motor |
 
@@ -107,14 +107,16 @@ O `AGENT.md` é lido de novo a cada turno: editou, vale na próxima resposta.
 name: Analista
 title: Acompanhamento financeiro
 model: claude-opus-5-5           # opcional; sem isto, o padrão do neoterm init
-tools: [Read, Glob, Grep, Write, Edit, Bash, WebSearch, WebFetch]   # com você
-unattended: [Read, Glob, Grep, WebSearch, WebFetch]                 # sozinho, em rotinas
-folders:
-  - path: ~/Documents/Financeiro
-    write: false                 # só leitura
+folders:                         # as pastas em que ele trabalha; roda na primeira
+  - "/Users/voce/Documents/Caixa"
+  - "/Users/voce/Downloads/extratos"
 ---
-Acompanhar o fluxo de caixa a partir dos extratos em workspace/extratos…
+Acompanhar o fluxo de caixa a partir dos extratos…
 ```
+
+As pastas são escolhidas na criação (pelo menos uma, já existindo) e o neoterm nunca cria nem apaga
+nada nelas. Excluir o agente não mexe nas pastas. Se uma pasta sumir, o agente aparece como problema
+até você corrigir o `AGENT.md`.
 
 ## Como funciona
 
@@ -122,37 +124,38 @@ Acompanhar o fluxo de caixa a partir dos extratos em workspace/extratos…
 guarda senha ou token.
 
 - **Identidade e contexto** vão em `--append-system-prompt`, montado a cada turno: quem ele é, a
-  função, as pastas, o que sabe de você, a memória, se tem alguém olhando e quais ferramentas tem
-  agora. O neoterm passa `--system-prompt-snapshot off`, porque por padrão o Claude Code congela o
+  função, as pastas, o que sabe de você, a memória e se tem alguém olhando. O neoterm passa `--system-prompt-snapshot off`, porque por padrão o Claude Code congela o
   prompt de sistema na primeira mensagem e uma edição do `AGENT.md` não chegaria às conversas já
   começadas.
-- **Escopo é `--tools`:** o agente só tem as ferramentas da lista, `tools` com você e `unattended`
-  sozinho. A lista de liberadas não basta, porque o Claude Code libera sozinho comandos de leitura.
-  Uma pasta com `write: false` ganha uma regra `Edit(...)` negada. Quem tem `Bash` ainda escreve
-  pelo terminal, então não dê `Bash` a quem não deve mexer numa pasta.
-- **Sua configuração fica de fora:** `--setting-sources project` e `--strict-mcp-config` deixam de
-  fora seus hooks, plugins e servidores MCP. O agente tem só o que o `AGENT.md` dá, mais as
-  ferramentas do neoterm.
+- **Sem permissões:** os agentes rodam com `--dangerously-skip-permissions`, como você rodaria o
+  Claude Code. Têm todas as ferramentas, inclusive sozinhos em rotinas, e nada pede confirmação.
+- **As pastas são o escopo:** ele roda na primeira, as outras entram com `--add-dir`, e o prompt diz
+  para trabalhar só nelas. É uma orientação, não uma trava: sem permissões, nada impede o agente de
+  ir além.
+- **Sua configuração pessoal fica de fora:** `--setting-sources project` e `--strict-mcp-config`
+  deixam de fora seus hooks, plugins e servidores MCP. A configuração da pasta vale, como valeria
+  para você ali: o `CLAUDE.md` e o `.claude/` do projeto.
 - **As ferramentas do neoterm** vêm por MCP, servidas pelo próprio motor: criar, listar, mudar e
-  apagar rotinas; agendar um retorno; lembrar e esquecer; pedir acesso. Cada execução recebe uma
+  apagar rotinas; agendar um retorno; lembrar e esquecer. Cada execução recebe uma
   chave própria, que diz quem está chamando; o modelo não escolhe em nome de quem age.
-- **Avisos na conversa:** quando você libera um acesso ou uma rotina falha, o próximo turno do
-  agente começa com esses avisos.
+- **Avisos na conversa:** quando uma rotina falha, o próximo turno do agente começa com o aviso.
+- **Sessões:** o Claude Code guarda as conversas por pasta, então as sessões de um agente aparecem
+  no `claude --resume` da primeira pasta dele.
 - **Fila:** um agente faz um turno por vez, e um grupo fala um de cada vez.
 
 ### Rotinas (regras do OpenBot)
 
 - Cron de 5 campos, com fuso; no máximo uma vez a cada 15 minutos; no máximo 20 ligadas.
-- **Agir** usa o escopo sozinho. **Só avisar** usa apenas ferramentas de leitura.
+- **Agir** faz o que a rotina pede. **Só avisar** diz ao agente para verificar e informar sem mudar
+  nada.
 - Horários perdidos com o motor desligado são pulados, não repetidos (tolerância de 10 minutos).
 - **Regra do cansaço:** avisa na primeira falha e desliga depois de 10 falhas seguidas. Religar zera
   a contagem.
-- Sem a ferramenta que precisa, a rotina pede acesso. Você libera em "precisa de você".
 
 ### Grupos
 
-- Um grupo é um projeto: uma pasta, uma conversa e os agentes. Cada um entra com a própria função e
-  escopo e trabalha na pasta do projeto, com uma sessão própria nesse grupo.
+- Um grupo é um projeto: uma pasta, uma conversa e os agentes. Cada um entra com a própria função,
+  roda na pasta do projeto e leva as pastas dele junto, com uma sessão própria nesse grupo.
 - Sem `@nome`, quem responde é o coordenador (o primeiro membro). Um agente que escreve `@colega`
   passa a vez; `@você` para o grupo e te chama.
 - Freio único, sem configuração: depois de 30 falas seguidas de agentes sem você, o grupo para e te
@@ -168,7 +171,7 @@ guarda senha ou token.
 ## Testes
 
 ```sh
-npm test            # 72 testes, com um "claude falso" (test/fixtures/fake-claude.mjs)
+npm test            # 77 testes, com um "claude falso" (test/fixtures/fake-claude.mjs)
 npm run typecheck
 ```
 

@@ -32,7 +32,9 @@ export type GroupDetail = GroupRow & { conversationId: string; members: GroupMem
 function expandFolder(path: string): string {
   if (path === "~") return homedir();
   if (path.startsWith("~/")) return join(homedir(), path.slice(2));
-  return isAbsolute(path) ? resolve(path) : resolve(process.cwd(), path);
+  // O motor não sabe de qual pasta a pessoa falou: o CLI e a interface mandam o caminho completo.
+  if (!isAbsolute(path)) throw new GroupProblem(`a pasta do projeto precisa de um caminho completo: ${path}`);
+  return resolve(path);
 }
 
 export async function createGroup(

@@ -4,8 +4,8 @@ import { type AttentionKind, agents, attention, groups } from "./db/schema.ts";
 import type { EventBus } from "./events.ts";
 
 /*
- * "Precisa de você": o que só a pessoa pode resolver. Um acesso que um agente pediu, uma rotina que
- * falhou ou foi desligada, um grupo esperando uma decisão. O mesmo assunto aberto duas vezes vira
+ * "Precisa de você": o que só a pessoa pode resolver. Uma rotina que falhou ou foi desligada, um
+ * grupo esperando uma decisão. O mesmo assunto aberto duas vezes vira
  * um item só, atualizado, e não uma pilha.
  */
 

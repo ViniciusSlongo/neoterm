@@ -1,9 +1,7 @@
 import { z } from "zod";
 import { agentDir } from "../agents/identity.ts";
 import { forget, MemoryRefused, remember } from "../agents/memory.ts";
-import { raiseAttention } from "../attention.ts";
 import type { Database } from "../db/client.ts";
-import { agents } from "../db/schema.ts";
 import type { EventBus } from "../events.ts";
 import { FollowupRefused, scheduleFollowup } from "../routines/followups.ts";
 import { describeWhen } from "../routines/schedule.ts";
@@ -17,9 +15,8 @@ import {
   updateRoutine,
 } from "../routines/store.ts";
 import { type ToolCaller, type ToolDefinition, ToolRefusal } from "./hub.ts";
-import { eq } from "drizzle-orm";
 
-/* As ferramentas que todo agente recebe: rotinas, retornos, memória e pedido de acesso. */
+/* As ferramentas que todo agente recebe: rotinas, retornos e memória. */
 
 const Mode = z.enum(["act", "notify"]);
 
@@ -58,7 +55,7 @@ export function neotermTools(deps: { db: Database; bus: EventBus; now?: () => Da
         instruction: z.string().min(1).describe("O que fazer a cada vez, completo, como se você fosse ler sem esta conversa"),
         cron: z.string().min(1).describe(CRON_HELP),
         timezone: z.string().optional().describe("Fuso IANA; sem isto, o da pessoa"),
-        mode: Mode.default("act").describe("act = pode agir dentro do seu escopo sozinho; notify = só verifica e avisa, sem mudar nada"),
+        mode: Mode.default("act").describe("act = faz o que a rotina pede; notify = só verifica e avisa, sem mudar nada"),
       }),
       run: (caller, args) =>
         asAnswer(async () => {
@@ -163,26 +160,6 @@ export function neotermTools(deps: { db: Database; bus: EventBus; now?: () => Da
           const removed = await forget(agentDir(caller.slug), String(args.text));
           return removed > 0 ? `Esqueci ${removed} linha(s).` : "Nada na memória com esse texto.";
         }),
-    },
-    {
-      name: "request_access",
-      description:
-        "Pede à pessoa uma ferramenta que você não tem nesta execução (por exemplo Bash ou Write numa rotina). Ela decide depois; siga com o que conseguir fazer agora.",
-      schema: z.object({
-        tool: z.string().min(1).describe("A ferramenta, ex.: Bash"),
-        reason: z.string().min(1).describe("Para quê, numa frase"),
-      }),
-      run: async (caller, args) => {
-        const [row] = await db.select({ slug: agents.slug }).from(agents).where(eq(agents.id, caller.agentId)).limit(1);
-        await raiseAttention(db, bus, {
-          kind: "access",
-          agentId: caller.agentId,
-          ...(caller.groupId ? { groupId: caller.groupId } : {}),
-          tool: String(args.tool),
-          text: `${row?.slug ?? caller.slug} quer usar ${String(args.tool)}${caller.mode === "unattended" ? " sozinho" : ""}: ${String(args.reason)}`,
-        });
-        return "Pedido registrado. A pessoa vê em 'precisa de você' e decide. Continue com o que der para fazer agora.";
-      },
     },
   ];
 }

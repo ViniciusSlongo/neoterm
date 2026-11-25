@@ -12,23 +12,17 @@ import { ClaudeError, type ClaudeTurn, runClaude } from "./claude.ts";
 export type { TurnEvent } from "../events.ts";
 
 /*
- * Um turno: o Claude Code roda com a identidade e o escopo do agente, e o que ele fez e disse
+ * Um turno: o Claude Code roda com a identidade e as pastas do agente, e o que ele fez e disse
  * entra na conversa. Serve à conversa com a pessoa, às rotinas, aos retornos e aos grupos; quem
  * chama decide a conversa, o modo e a mensagem de entrada.
  */
 
-/** Ferramentas que só leem, para rotinas que só avisam. */
-export const READ_ONLY_TOOLS = new Set(["Read", "Glob", "Grep", "WebSearch", "WebFetch", "LS", "NotebookRead"]);
-
-/** O escopo do agente nesta execução: com você por perto, ou sozinho; e só leitura, se for o caso. */
-export function scopeOf(agent: AgentDefinition, mode: RunMode, readOnly = false) {
-  const base = mode === "interactive" ? agent.tools : agent.unattended;
-  return {
-    tools: readOnly ? base.filter((tool) => READ_ONLY_TOOLS.has(tool)) : base,
-    addDirs: agent.folders.map((folder) => folder.path),
-    // `//` é caminho absoluto nas regras do Claude Code; Edit vale para toda ferramenta que edita.
-    disallowed: agent.folders.filter((folder) => !folder.write).map((folder) => `Edit(/${folder.path}/**)`),
-  };
+/**
+ * As pastas do agente que entram com `--add-dir`: ele roda na primeira (num grupo, na pasta do
+ * projeto), e as outras vêm junto.
+ */
+export function extraDirs(agent: AgentDefinition, cwd = agent.workspace): string[] {
+  return agent.folders.filter((folder) => folder !== cwd);
 }
 
 /** Onde fica a sessão do Claude Code desta conversa: na conversa, ou no membro do grupo. */
@@ -158,7 +152,6 @@ export class TurnEngine {
     const started = Date.now();
     const parts: MessagePart[] = [];
     try {
-      const scope = scopeOf(spec.agent, spec.mode, spec.readOnly);
       const base: Omit<ClaudeTurn, "sessionId" | "resume"> = {
         prompt: spec.prompt,
         cwd: spec.cwd,
@@ -170,9 +163,8 @@ export class TurnEngine {
           neotermTools: Boolean(token),
           ...(spec.readOnly ? { readOnly: true } : {}),
           ...(spec.extraSystem ? { extra: spec.extraSystem } : {}),
-          tools: scope.tools,
         }),
-        ...scope,
+        addDirs: extraDirs(spec.agent, spec.cwd),
         ...(token && mcpUrl ? { mcp: { url: mcpUrl, token } } : {}),
       };
       let resultText: string;

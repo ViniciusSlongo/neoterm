@@ -56,8 +56,6 @@ describe("argumentos do claude", () => {
     cwd,
     model: "claude-opus-5-5",
     systemPrompt: "<identity>x</identity>",
-    tools: ["Read", "Bash"],
-    disallowed: ["Edit(//srv/dados/**)"],
     addDirs: ["/srv/dados"],
     sessionId: "11111111-1111-1111-1111-111111111111",
   };
@@ -69,10 +67,13 @@ describe("argumentos do claude", () => {
     assert.deepEqual(resumed.slice(-2), ["--resume", base.sessionId]);
   });
 
-  it("dá ao agente só as ferramentas do escopo e nada da configuração da pessoa", () => {
+  it("roda sem pedir permissão, com as pastas do agente e sem a configuração pessoal", () => {
     const args = claudeArgs({ ...base, resume: false });
-    assert.equal(args[args.indexOf("--tools") + 1], "Read,Bash");
-    assert.equal(args[args.indexOf("--permission-prompts") + 1], "none");
+    assert.ok(args.includes("--dangerously-skip-permissions"));
+    for (const flag of ["--tools", "--allowedTools", "--disallowedTools", "--permission-prompts"]) {
+      assert.ok(!args.includes(flag), `sem ${flag}`);
+    }
+    assert.equal(args[args.indexOf("--add-dir") + 1], "/srv/dados");
     assert.equal(args[args.indexOf("--setting-sources") + 1], "project");
     assert.ok(args.includes("--strict-mcp-config"));
     assert.ok(!args.includes("--bare"), "--bare desliga o login do plano");

@@ -18,7 +18,7 @@ export type AgentState = "running" | "paused" | "idle";
 export type TodayStatus = "done" | "failed" | "running" | "scheduled" | "skipped";
 
 export type NeotermState = {
-  agents: { slug: string; name: string; title: string; model: string | null; state: AgentState }[];
+  agents: { slug: string; name: string; title: string; model: string | null; folders: string[]; state: AgentState }[];
   problems: { slug: string; error: string }[];
   groups: { slug: string; folder: string; members: string[]; coordinator: string | null; busy: boolean; waiting: boolean }[];
   today: { at: string; time: string; routine: string; agent: string; group: string | null; status: TodayStatus }[];
@@ -87,6 +87,7 @@ export async function buildState(core: Core, groupsEngine: GroupEngine, planUsag
       name: agent.name,
       title: agent.title,
       model: agent.model ?? null,
+      folders: agent.folders,
       state: running.has(agent.slug) ? "running" : rows[index]?.pausedAt ? "paused" : "idle",
     })),
     problems: problems.map((problem) => ({ slug: problem.slug, error: problem.message })),

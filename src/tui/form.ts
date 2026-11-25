@@ -128,7 +128,11 @@ export function renderForm(form: FormState): ReactNode {
   form.fields.forEach((field, index) => {
     if (field.when && !field.when(values)) return;
     const active = index === form.index;
-    const label = h(Text, { color: active ? theme.accent : theme.muted, bold: active }, field.label.padEnd(LABEL_WIDTH));
+    const label = h(
+      Box,
+      { width: LABEL_WIDTH, flexShrink: 0 },
+      h(Text, { color: active ? theme.accent : theme.muted, bold: active }, field.label),
+    );
     let control: ReactNode;
     if (field.kind === "text") {
       const empty = !field.value;

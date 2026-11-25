@@ -15,17 +15,12 @@ export type PromptContext = {
   mode: RunMode;
   now: Date;
   timeZone: string;
-  /** Uma rotina que só avisa: pode ler e verificar, não mudar. */
+  /** Uma rotina que só avisa: verifica e informa, sem mudar nada. */
   readOnly?: boolean;
-  /** Tem as ferramentas do neoterm (rotinas, retornos, memória, acesso). */
+  /** Tem as ferramentas do neoterm (rotinas, retornos, memória). */
   neotermTools?: boolean;
   /** Contexto a mais, como o do grupo em que está. */
   extra?: string;
-  /**
-   * As ferramentas desta execução. Ditas com todas as letras: numa sessão continuada, o agente
-   * confia no que disse antes ("não tenho Bash") mesmo depois de a pessoa liberar.
-   */
-  tools?: readonly string[];
 };
 
 export async function buildSystemPrompt(
@@ -58,43 +53,37 @@ export function renderSystemPrompt(
     context.extra ? context.extra.trim() : "",
     files.aboutPerson ? tag("about_the_person", files.aboutPerson) : "",
     files.memory ? tag("memory", files.memory) : "",
-    context.neotermTools ? tag("neoterm_tools", toolsText(context.mode)) : "",
-    tag("run_mode", runModeText(context.mode, context.readOnly, context.tools)),
+    context.neotermTools ? tag("neoterm_tools", toolsText()) : "",
+    tag("run_mode", runModeText(context.mode, context.readOnly)),
     tag("today", `Hoje é ${formatDate(context.now, context.timeZone)} (fuso ${context.timeZone}).`),
   ];
   return sections.filter(Boolean).join("\n\n");
 }
 
 function workspaceText(agent: AgentDefinition): string {
-  const lines = [`Sua pasta de trabalho é ${agent.workspace}.`];
-  if (agent.folders.length > 0) {
-    lines.push("Você também tem acesso a:");
-    for (const folder of agent.folders) {
-      lines.push(`- ${folder.path} (${folder.write ? "leitura e escrita" : "só leitura: não altere nada aqui"})`);
-    }
+  if (agent.folders.length === 0) return `Sua pasta de trabalho é ${agent.workspace}.`;
+  const lines = ["Seu escopo são estas pastas do computador. Trabalhe só dentro delas:"];
+  for (const folder of agent.folders) {
+    lines.push(`- ${folder}`);
   }
   return lines.join("\n");
 }
 
-function runModeText(mode: RunMode, readOnly = false, tools?: readonly string[]): string {
-  const available = tools
-    ? `\nNesta execução você tem estas ferramentas de trabalho: ${tools.length > 0 ? tools.join(", ") : "nenhuma"}. Vale o que está aqui, mesmo que antes nesta conversa tenha sido diferente.`
-    : "";
+function runModeText(mode: RunMode, readOnly = false): string {
   const base =
     mode === "interactive"
       ? "A pessoa está acompanhando esta conversa agora."
-      : "Ninguém está acompanhando agora: você está trabalhando sozinho. Use só as ferramentas que tem; se precisar de uma que não tem, peça com request_access, diga o que faltou e siga com o que der, sem tentar contornar.";
-  return `${base}${available}${readOnly ? "\nEsta execução só avisa: leia, verifique e informe, sem mudar nada." : ""}`;
+      : "Ninguém está acompanhando agora: você está trabalhando sozinho. Se faltar algo que só a pessoa resolve, diga o que faltou e siga com o que der.";
+  return `${base}${readOnly ? "\nEsta execução só avisa: leia, verifique e informe, sem mudar nada." : ""}`;
 }
 
-function toolsText(mode: RunMode): string {
+function toolsText(): string {
   const lines = [
     "Além das ferramentas de trabalho, você tem as do neoterm (mcp__neoterm__*):",
     "- create_routine, list_routines, update_routine, delete_routine: quando a pessoa pedir algo recorrente (\"todo dia\", \"toda sexta às 17h\"), crie uma rotina em vez de só prometer. Diga em palavras quando ela vai rodar.",
     "- schedule_followup: para voltar a esta conversa sozinho daqui a um tempo.",
     "- remember e forget: para fatos duráveis sobre a pessoa ou o trabalho, não para o que só vale agora.",
   ];
-  if (mode === "unattended") lines.push("- request_access: para pedir uma ferramenta que você não tem agora.");
   return lines.join("\n");
 }
 

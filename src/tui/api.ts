@@ -34,7 +34,7 @@ export type RoutineItem = {
 
 export type RunItem = { id: string; status: RunStatus; error: string | null; durationMs: number | null; startedAt: string };
 
-export type NewAgentInput = { slug: string; title?: string; role?: string; model?: string; tools?: string[]; unattended?: string[] };
+export type NewAgentInput = { slug: string; folders: string[]; title?: string; role?: string; model?: string };
 export type NewGroupInput = { slug: string; folder: string; members: string[]; objective?: string };
 export type NewRoutineInput = {
   agent: string;
@@ -58,7 +58,6 @@ export interface NeotermApi {
   createAgent(input: NewAgentInput): Promise<void>;
   createGroup(input: NewGroupInput): Promise<void>;
   setPaused(slug: string, paused: boolean): Promise<void>;
-  allow(attentionId: string): Promise<void>;
   dismiss(attentionId: string): Promise<void>;
   /** Escuta o motor; reconecta sozinho. Devolve como parar. */
   subscribe(onEvent: (event: NeotermEvent) => void, onConnection: (connected: boolean) => void): () => void;
@@ -105,7 +104,6 @@ export function httpApi(base: string = DAEMON_URL): NeotermApi {
     createAgent: async (input) => void (await call("/agents", { body: { ...input, name: input.slug } })),
     createGroup: async (input) => void (await call("/groups", { body: input })),
     setPaused: async (slug, paused) => void (await call(`/agents/${slug}/${paused ? "pause" : "resume"}`, { body: {} })),
-    allow: async (id) => void (await call(`/attention/${id}/allow`, { body: {} })),
     dismiss: async (id) => void (await call(`/attention/${id}/resolve`, { body: {} })),
     subscribe(onEvent, onConnection) {
       let stopped = false;
