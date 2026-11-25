@@ -17,11 +17,36 @@ Não precisa de Docker nem de banco externo: o banco é um arquivo SQLite em `~/
 npm install
 npm link                    # opcional: deixa o comando `neoterm` disponível
 neoterm init                # confere o Claude Code, cria ~/.neoterm e o banco
-neoterm daemon              # o motor: deixe rodando num terminal
-neoterm                     # em outro terminal: abre a interface
+neoterm service on          # liga o motor junto com o Mac (ou: neoterm daemon, num terminal)
+neoterm                     # abre a interface
 ```
 
-Sem `npm link`, use `node src/cli/main.ts` no lugar de `neoterm`.
+Sem `npm link`, use `node src/cli/main.ts` no lugar de `neoterm`. Funciona de qualquer pasta: os
+dados ficam em `~/.neoterm`.
+
+## O motor
+
+O motor (`daemon`) dispara as rotinas e os retornos, roda os turnos dos agentes e toca os grupos. A
+interface e o CLI só conversam com ele, em `127.0.0.1:4777`. Fechar a interface não para nada.
+
+```sh
+neoterm service on          # liga junto com o Mac, pelo launchd
+neoterm service status      # está rodando? com qual pid?
+neoterm service restart     # depois de atualizar o código do neoterm
+neoterm service off         # para e não liga mais sozinho
+neoterm daemon              # ou: roda neste terminal, até o ctrl+c
+```
+
+- **Quando sobe:** quando você entra na sua conta do Mac, não antes. O Claude Code lê o seu login
+  nas Chaves, que só abrem com você logado. Se o motor cair, o launchd liga de novo.
+- **Com o Mac dormindo nada roda.** Horários perdidos são pulados, como com o motor desligado.
+- **Ambiente:** o serviço usa o `node`, o `claude` e o PATH do terminal onde você rodou
+  `neoterm service on`. Mudou de lugar algum deles (outro Node, outro PATH)? Rode `on` de novo.
+- **Log:** `~/.neoterm/daemon.log`.
+- **Pastas protegidas do macOS** (Documentos, Mesa, Downloads, iCloud): rodando pelo launchd, quem
+  acessa é o `node`, não o seu terminal. O macOS pode pedir permissão na primeira vez ou bloquear.
+  Se um agente não conseguir ler uma pasta dessas, libere o `node` em Ajustes do Sistema →
+  Privacidade e Segurança → Acesso Total ao Disco.
 
 ## A interface
 
@@ -143,7 +168,7 @@ guarda senha ou token.
 ## Testes
 
 ```sh
-npm test            # 69 testes, com um "claude falso" (test/fixtures/fake-claude.mjs)
+npm test            # 72 testes, com um "claude falso" (test/fixtures/fake-claude.mjs)
 npm run typecheck
 ```
 

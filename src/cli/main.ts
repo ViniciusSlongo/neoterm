@@ -13,7 +13,8 @@ const HELP = `${bold("neoterm")} ${muted("· agentes no terminal, com o Claude C
 
   neoterm                               abre a interface
   neoterm init [--model <modelo>]       configura: Claude Code, banco, pastas
-  neoterm daemon                        liga o motor (deixe rodando num terminal)
+  neoterm daemon                        liga o motor neste terminal
+  neoterm service on|off|status|restart liga o motor junto com o Mac
 
 ${muted("agentes")}
   neoterm agents
@@ -66,6 +67,10 @@ async function main(argv: string[]): Promise<number> {
       const { startDaemon } = await import("../daemon/server.ts");
       await startDaemon();
       return -1;
+    }
+    case "service": {
+      const { serviceCommand } = await import("./service.ts");
+      return serviceCommand(rest[0]);
     }
     case "agents":
       return agentsCommand();

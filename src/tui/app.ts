@@ -767,7 +767,7 @@ export function App({ api }: { api: NeotermApi }): ReactNode {
     : "";
   const status = connected
     ? h(Text, { color: theme.muted }, h(Text, { color: theme.green }, "●"), " motor", plan)
-    : h(Text, { color: theme.red }, "motor desligado: rode neoterm daemon");
+    : h(Text, { color: theme.red }, "motor desligado: rode neoterm daemon ou neoterm service on");
 
   return h(
     Box,

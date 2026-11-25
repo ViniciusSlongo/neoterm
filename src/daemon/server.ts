@@ -373,8 +373,15 @@ function clampLimit(value: string | undefined): number {
 /** Liga o motor numa porta. `port: 0` escolhe uma livre (para os testes). */
 export async function listen(neoterm: Neoterm, port: number) {
   const app = createApp(neoterm);
-  const server = await new Promise<ReturnType<typeof serve>>((resolve) => {
+  const server = await new Promise<ReturnType<typeof serve>>((resolve, reject) => {
     const started = serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, () => resolve(started));
+    started.once("error", (error: NodeJS.ErrnoException) =>
+      reject(
+        error.code === "EADDRINUSE"
+          ? new Error(`a porta ${port} já está em uso: o motor já está rodando? Veja com neoterm service status`)
+          : error,
+      ),
+    );
   });
   const actual = (server.address() as AddressInfo).port;
   neoterm.setMcpUrl(`http://127.0.0.1:${actual}/mcp`);
@@ -382,6 +389,8 @@ export async function listen(neoterm: Neoterm, port: number) {
 }
 
 export async function startDaemon(): Promise<void> {
+  // Rodando pelo launchd, a saída vai para ~/.neoterm/daemon.log: cada linha ganha a hora.
+  if (!process.stdout.isTTY) stampConsole();
   const connection = connect();
   await applyMigrations(connection);
   const neoterm = new Neoterm(connection.db);
@@ -389,7 +398,7 @@ export async function startDaemon(): Promise<void> {
   await neoterm.start();
   console.log(`motor do neoterm em http://127.0.0.1:${port}  (ctrl+c para parar)`);
   const stop = () => {
-    console.log("\nparando o motor…");
+    console.log(process.stdout.isTTY ? "\nparando o motor…" : "parando o motor…");
     neoterm.stop();
     server.close();
     connection.close();
@@ -397,4 +406,11 @@ export async function startDaemon(): Promise<void> {
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
+}
+
+function stampConsole(): void {
+  for (const level of ["log", "error"] as const) {
+    const write = console[level].bind(console);
+    console[level] = (...args: unknown[]) => write(new Date().toISOString(), ...args);
+  }
 }

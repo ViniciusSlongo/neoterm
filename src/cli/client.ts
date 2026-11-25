@@ -4,7 +4,7 @@ import { DAEMON_URL } from "../config.ts";
 
 export class DaemonUnavailable extends Error {
   constructor() {
-    super("o motor não está rodando. Abra outro terminal e rode: neoterm daemon");
+    super("o motor não está rodando. Rode neoterm daemon num terminal, ou neoterm service on para ligar junto com o Mac");
     this.name = "DaemonUnavailable";
   }
 }

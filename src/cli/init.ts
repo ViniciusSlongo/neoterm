@@ -74,7 +74,7 @@ export async function init(options: { model?: string }): Promise<boolean> {
 
   console.log(
     healthy
-      ? `\n${bold("Pronto.")} Rode ${accent("neoterm daemon")} num terminal e crie um agente com ${accent("neoterm agent new <nome>")}.\n`
+      ? `\n${bold("Pronto.")} Ligue o motor com ${accent("neoterm service on")} (junto com o Mac) ou ${accent("neoterm daemon")} (neste terminal), e abra a interface com ${accent("neoterm")}.\n`
       : `\n${muted("Resolva o item acima e rode")} neoterm init ${muted("de novo.")}\n`,
   );
   return healthy;
