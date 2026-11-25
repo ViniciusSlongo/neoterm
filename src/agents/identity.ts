@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { parse as parseYaml } from "yaml";
+import { isScalar, isSeq, parseDocument, parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { AGENTS_DIR, isMissingFile } from "../config.ts";
 
@@ -216,6 +216,35 @@ export async function createAgent(input: NewAgent): Promise<AgentDefinition> {
     await writeFile(join(dir, MEMORY_FILE), "", "utf8");
   }
   return loadAgent(input.slug);
+}
+
+/**
+ * Dá uma ferramenta ao agente, também para quando roda sozinho: o "liberar" de um pedido de acesso.
+ * Edita o cabeçalho do AGENT.md mantendo comentários e formato.
+ */
+export async function grantTool(slug: string, tool: string): Promise<AgentDefinition> {
+  const path = join(agentDir(slug), AGENT_FILE);
+  const source = await readFile(path, "utf8");
+  const match = /^(---\r?\n)([\s\S]*?)(\r?\n---[ \t]*(?:\r?\n|$))([\s\S]*)$/.exec(source);
+  if (!match) throw new AgentProblem(slug, `${AGENT_FILE} está sem cabeçalho`);
+  const document = parseDocument(match[2] ?? "");
+  for (const [key, defaults] of [
+    ["tools", DEFAULT_TOOLS],
+    ["unattended", DEFAULT_UNATTENDED_TOOLS],
+  ] as const) {
+    const node = document.get(key, true);
+    if (isSeq(node)) {
+      if (!node.items.some((item) => String(isScalar(item) ? item.value : item) === tool)) node.add(tool);
+    } else {
+      const seq = document.createNode([...new Set([...defaults, tool])]);
+      seq.flow = true;
+      document.set(key, seq);
+    }
+  }
+  const next = `${match[1]}${document.toString().trimEnd()}${match[3]}${match[4]}`;
+  parseAgentFile(slug, next);
+  await writeFile(path, next, "utf8");
+  return loadAgent(slug);
 }
 
 export function agentTemplate(input: NewAgent): string {

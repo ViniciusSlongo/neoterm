@@ -11,12 +11,10 @@ export const AGENTS_DIR = join(NEOTERM_HOME, "agents");
 export const USER_FILE = join(NEOTERM_HOME, "USER.md");
 const SETTINGS_FILE = join(NEOTERM_HOME, "config.json");
 
-/** A raiz deste repositório: onde ficam o docker-compose.yml e as migrações. */
+/** A raiz deste repositório: onde ficam as migrações. */
 export const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
-export const DATABASE_URL =
-  process.env.NEOTERM_DATABASE_URL ??
-  "postgres://neoterm:neoterm@127.0.0.1:5433/neoterm";
+export const DATABASE_FILE = process.env.NEOTERM_DATABASE ?? join(NEOTERM_HOME, "neoterm.db");
 export const DAEMON_PORT = Number(process.env.NEOTERM_PORT ?? 4777);
 export const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
 export const CLAUDE_BIN = process.env.NEOTERM_CLAUDE_BIN ?? "claude";

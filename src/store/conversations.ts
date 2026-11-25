@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
-import { agents, conversations, messages } from "../db/schema.ts";
+import { agents, conversations, groupMembers, messages } from "../db/schema.ts";
+import type { SessionSlot } from "../runner/turn.ts";
 
 export type AgentRow = typeof agents.$inferSelect;
 export type ConversationRow = typeof conversations.$inferSelect;
@@ -19,6 +20,11 @@ export async function findAgentRow(db: Database, slug: string): Promise<AgentRow
   return row;
 }
 
+export async function agentRowById(db: Database, id: string): Promise<AgentRow | undefined> {
+  const [row] = await db.select().from(agents).where(eq(agents.id, id)).limit(1);
+  return row;
+}
+
 /** A conversa da pessoa com o agente: a mais recente que não foi arquivada, ou uma nova. */
 export async function mainConversation(db: Database, agentId: string): Promise<ConversationRow> {
   const [current] = await db
@@ -33,29 +39,45 @@ export async function mainConversation(db: Database, agentId: string): Promise<C
   return created;
 }
 
-/** As últimas `limit` mensagens da conversa principal do agente, da mais antiga para a mais nova. */
-export async function recentMessages(
-  db: Database,
-  agentId: string,
-  limit: number,
-): Promise<MessageRow[]> {
-  const conversation = await mainConversation(db, agentId);
+export async function conversationById(db: Database, id: string): Promise<ConversationRow | undefined> {
+  const [row] = await db.select().from(conversations).where(eq(conversations.id, id)).limit(1);
+  return row;
+}
+
+/** As últimas `limit` mensagens de uma conversa, da mais antiga para a mais nova. */
+export async function lastMessages(db: Database, conversationId: string, limit: number): Promise<MessageRow[]> {
   const newestFirst = await db
     .select()
     .from(messages)
-    .where(eq(messages.conversationId, conversation.id))
+    .where(eq(messages.conversationId, conversationId))
     .orderBy(desc(messages.createdAt))
     .limit(limit);
   return newestFirst.reverse();
 }
 
-export async function conversationMessages(
-  db: Database,
-  conversationId: string,
-): Promise<MessageRow[]> {
-  return db
-    .select()
-    .from(messages)
-    .where(eq(messages.conversationId, conversationId))
-    .orderBy(asc(messages.createdAt));
+export async function conversationMessages(db: Database, conversationId: string): Promise<MessageRow[]> {
+  return db.select().from(messages).where(eq(messages.conversationId, conversationId)).orderBy(asc(messages.createdAt));
+}
+
+/** A sessão do Claude Code guardada na conversa. */
+export function conversationSession(db: Database, conversation: ConversationRow): SessionSlot {
+  return {
+    id: conversation.claudeSessionId,
+    save: async (id) => {
+      await db.update(conversations).set({ claudeSessionId: id }).where(eq(conversations.id, conversation.id));
+    },
+  };
+}
+
+/** A sessão do Claude Code de um agente dentro de um grupo. */
+export function memberSession(db: Database, groupId: string, agentId: string, current: string | null): SessionSlot {
+  return {
+    id: current,
+    save: async (id) => {
+      await db
+        .update(groupMembers)
+        .set({ claudeSessionId: id })
+        .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.agentId, agentId)));
+    },
+  };
 }

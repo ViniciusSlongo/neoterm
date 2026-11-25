@@ -26,8 +26,13 @@ export type ClaudeTurn = {
   sessionId: string;
   /** Continuar a sessão `sessionId` em vez de começá-la. */
   resume: boolean;
+  /** O servidor MCP do neoterm e a chave desta execução. */
+  mcp?: { url: string; token: string };
   signal?: AbortSignal;
 };
+
+/** O nome com que as ferramentas do neoterm aparecem para o agente: mcp__neoterm__<nome>. */
+export const MCP_SERVER_NAME = "neoterm";
 
 /** Quanto do plano já foi usado, como o Claude Code informa a cada turno. */
 export type PlanUsage = {
@@ -75,7 +80,23 @@ export function claudeArgs(turn: ClaudeTurn): string[] {
     "project",
     "--strict-mcp-config",
   ];
-  if (turn.tools.length > 0) args.push("--allowedTools", ...turn.tools);
+  const allowed = [...turn.tools];
+  if (turn.mcp) {
+    args.push(
+      "--mcp-config",
+      JSON.stringify({
+        mcpServers: {
+          [MCP_SERVER_NAME]: {
+            type: "http",
+            url: turn.mcp.url,
+            headers: { Authorization: `Bearer ${turn.mcp.token}` },
+          },
+        },
+      }),
+    );
+    allowed.push(`mcp__${MCP_SERVER_NAME}`);
+  }
+  if (allowed.length > 0) args.push("--allowedTools", ...allowed);
   if (turn.disallowed.length > 0) args.push("--disallowedTools", ...turn.disallowed);
   for (const dir of turn.addDirs) args.push("--add-dir", dir);
   args.push(turn.resume ? "--resume" : "--session-id", turn.sessionId);

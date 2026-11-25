@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
-import { AGENTS_DIR, CLAUDE_BIN, REPO_ROOT, readSettings, writeSettings } from "../config.ts";
-import { applyMigrations, connect, errorMessage, waitForDatabase } from "../db/client.ts";
+import { AGENTS_DIR, CLAUDE_BIN, DATABASE_FILE, readSettings, writeSettings } from "../config.ts";
+import { applyMigrations, connect, errorMessage } from "../db/client.ts";
 import { accent, bold, fail, muted, ok, seconds } from "./style.ts";
 
 /*
- * `neoterm init`: confere o Claude Code, sobe o banco, cria a pasta dos agentes e guarda o
+ * `neoterm init`: confere o Claude Code, prepara o banco, cria a pasta dos agentes e guarda o
  * modelo padrão. Pode rodar de novo a qualquer hora; cada passo só faz o que falta.
  */
 
@@ -53,17 +53,11 @@ export async function init(options: { model?: string }): Promise<boolean> {
   }
 
   console.log(`\n${accent("2")}  ${bold("Banco de dados")}`);
-  const up = await capture("docker", ["compose", "up", "-d", "--wait"], undefined, REPO_ROOT);
-  if (up.code !== 0) {
-    console.log(`   ${fail(`não consegui subir o Postgres no Docker: ${up.stderr.trim() || up.stdout.trim()}`)}`);
-    return false;
-  }
   try {
-    await waitForDatabase();
-    const { db, sql } = connect();
-    await applyMigrations(db);
-    await sql.end();
-    console.log(`   ${ok("Postgres no Docker · container neoterm-db · 127.0.0.1:5433")}`);
+    const connection = connect();
+    await applyMigrations(connection);
+    connection.close();
+    console.log(`   ${ok(`SQLite em ${DATABASE_FILE}`)}`);
     console.log(`   ${ok("tabelas em dia")}`);
   } catch (error) {
     console.log(`   ${fail(errorMessage(error))}`);
@@ -88,9 +82,9 @@ export async function init(options: { model?: string }): Promise<boolean> {
 
 type Captured = { code: number | null; stdout: string; stderr: string };
 
-function capture(command: string, args: string[], input?: string, cwd?: string): Promise<Captured> {
+function capture(command: string, args: string[], input?: string): Promise<Captured> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
