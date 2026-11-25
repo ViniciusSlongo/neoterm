@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull } from "drizzle-orm";
 import type { Database } from "../db/client.ts";
 import { agents, conversations, groupMembers, messages } from "../db/schema.ts";
 import type { SessionSlot } from "../runner/turn.ts";
@@ -80,4 +80,33 @@ export function memberSession(db: Database, groupId: string, agentId: string, cu
         .where(and(eq(groupMembers.groupId, groupId), eq(groupMembers.agentId, agentId)));
     },
   };
+}
+
+/**
+ * Os avisos do neoterm (acesso liberado, rotina que falhou) desde a última resposta do agente,
+ * prontos para abrir o próximo turno. Ditos na conversa, e não só no prompt de sistema, porque o
+ * agente confia mais no que leu na conversa do que numa instrução que mudou.
+ */
+export async function withNotices(db: Database, conversationId: string, agentId: string, prompt: string): Promise<string> {
+  const [lastReply] = await db
+    .select({ at: messages.createdAt })
+    .from(messages)
+    .where(and(eq(messages.conversationId, conversationId), eq(messages.agentId, agentId), eq(messages.author, "agent")))
+    .orderBy(desc(messages.createdAt))
+    .limit(1);
+  const notices = (
+    await db
+      .select()
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, conversationId),
+          eq(messages.author, "system"),
+          lastReply ? gt(messages.createdAt, lastReply.at) : undefined,
+        ),
+      )
+      .orderBy(asc(messages.createdAt))
+  ).filter((message) => message.meta.notice !== "followup");
+  if (notices.length === 0) return prompt;
+  return `[Avisos do neoterm desde a sua última resposta]\n${notices.map((notice) => `- ${notice.text}`).join("\n")}\n\n${prompt}`;
 }

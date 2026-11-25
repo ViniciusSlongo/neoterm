@@ -58,6 +58,8 @@ export async function buildState(core: Core, groupsEngine: GroupEngine, planUsag
   for (const routine of enabled) {
     const bounds = dayBounds(now, routine.timezone);
     for (const at of occurrencesBetween(routine.cron, routine.timezone, bounds.start, bounds.end)) {
+      // Uma vez de hoje antes da rotina existir (ou ser religada) não é uma vez perdida.
+      if (at < routine.enabledAt) continue;
       const run = recentRuns.find(
         (candidate) =>
           candidate.routineId === routine.id &&

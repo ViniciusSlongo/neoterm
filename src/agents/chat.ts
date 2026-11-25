@@ -2,7 +2,7 @@ import { agentKey, type Core } from "../core.ts";
 import { messages } from "../db/schema.ts";
 import type { TurnEvent } from "../events.ts";
 import type { TurnOutcome } from "../runner/turn.ts";
-import { conversationSession, ensureAgentRow, mainConversation } from "../store/conversations.ts";
+import { conversationSession, ensureAgentRow, mainConversation, withNotices } from "../store/conversations.ts";
 import { loadAgent } from "./identity.ts";
 
 /**
@@ -19,6 +19,7 @@ export async function chatWithAgent(
   return core.engine.queue.run([agentKey(slug)], async () => {
     const row = await ensureAgentRow(core.db, slug);
     const conversation = await mainConversation(core.db, row.id);
+    const prompt = await withNotices(core.db, conversation.id, row.id, text);
     await core.db.insert(messages).values({ conversationId: conversation.id, author: "person", text });
     core.bus.changed("messages", { kind: "agent", slug });
     return core.engine.execute({
@@ -28,7 +29,7 @@ export async function chatWithAgent(
       scope: { kind: "agent", slug },
       trigger: "chat",
       mode: "interactive",
-      prompt: text,
+      prompt,
       cwd: agent.workspace,
       session: conversationSession(core.db, conversation),
       ...(onEvent ? { onEvent } : {}),

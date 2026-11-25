@@ -70,3 +70,15 @@ describe("escopo e prompt", () => {
     assert.match(prompt, /\/srv\/dados \(só leitura/);
   });
 });
+
+describe("ferramentas no prompt", () => {
+  it("diz com todas as letras o que esta execução tem", () => {
+    const agent = parseAgentFile("a", "---\nname: Ana\n---\nx");
+    const prompt = renderSystemPrompt(
+      agent,
+      { mode: "unattended", now: new Date(), timeZone: "UTC", tools: ["Read", "Bash"] },
+      {},
+    );
+    assert.match(prompt, /Nesta execução você tem estas ferramentas de trabalho: Read, Bash\. Vale o que está aqui/);
+  });
+});

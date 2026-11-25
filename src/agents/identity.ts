@@ -197,6 +197,10 @@ export type NewAgent = {
   title?: string;
   role?: string;
   model?: string;
+  /** Escopo com você; sem isto, o padrão. */
+  tools?: string[];
+  /** Escopo sozinho; sem isto, o padrão. */
+  unattended?: string[];
 };
 
 export async function createAgent(input: NewAgent): Promise<AgentDefinition> {
@@ -259,9 +263,9 @@ export function agentTemplate(input: NewAgent): string {
     input.model ? `model: ${input.model}` : "# model: claude-opus-5-5   # sem isto, usa o modelo padrão do neoterm",
     "",
     "# Escopo com você por perto: as ferramentas que ele tem.",
-    `tools: [${DEFAULT_TOOLS.join(", ")}]`,
+    `tools: [${(input.tools ?? DEFAULT_TOOLS).join(", ")}]`,
     "# Escopo sozinho, em rotinas: só o que pode fazer sem ninguém olhando.",
-    `unattended: [${DEFAULT_UNATTENDED_TOOLS.join(", ")}]`,
+    `unattended: [${(input.unattended ?? DEFAULT_UNATTENDED_TOOLS).join(", ")}]`,
     "",
     "# Pastas além de workspace/. write: false deixa só leitura.",
     "folders: []",

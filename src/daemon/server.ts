@@ -31,7 +31,7 @@ import {
 } from "../routines/store.ts";
 import { agentRowById, ensureAgentRow, findAgentRow, lastMessages, mainConversation } from "../store/conversations.ts";
 import { desc, eq } from "drizzle-orm";
-import { runs } from "../db/schema.ts";
+import { messages, runs } from "../db/schema.ts";
 
 /*
  * O motor: um servidor HTTP só em 127.0.0.1, que o CLI e a interface de terminal usam. Ele é o
@@ -158,9 +158,6 @@ export function createApp(neoterm: Neoterm): Hono {
   app.post("/agents", async (c) => {
     const input = await body(c.req.raw, NewAgent);
     const agent = await createAgent(input);
-    if (input.tools || input.unattended) {
-      for (const tool of input.unattended ?? []) await grantTool(agent.slug, tool);
-    }
     await ensureAgentRow(db, agent.slug);
     bus.changed("agents");
     return c.json({ agent: await loadAgent(agent.slug) }, 201);
@@ -347,6 +344,15 @@ export function createApp(neoterm: Neoterm): Hono {
     if (!row) throw new BadRequest("o agente não existe mais");
     await grantTool(row.slug, item.tool);
     await resolveAttention(db, bus, item.id);
+    // O agente fica sabendo na conversa, no próximo turno (veja withNotices).
+    const conversation = await mainConversation(db, row.id);
+    await db.insert(messages).values({
+      conversationId: conversation.id,
+      author: "system",
+      text: `A pessoa liberou ${item.tool} para ${row.slug}, também quando roda sozinho.`,
+      meta: { notice: "access_granted" },
+    });
+    bus.changed("messages", { kind: "agent", slug: row.slug });
     bus.changed("agents");
     return c.json({ ok: true, agent: row.slug, tool: item.tool });
   });

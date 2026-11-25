@@ -25,7 +25,7 @@ export type MessageMeta = {
   mentions?: string[];
   /** Pediu uma decisão da pessoa com @você. */
   asksPerson?: boolean;
-  notice?: "routine_failed" | "routine_disabled" | "group_stopped" | "agent_paused" | "followup";
+  notice?: "routine_failed" | "routine_disabled" | "group_stopped" | "agent_paused" | "followup" | "access_granted";
 };
 
 export type RunTrigger = "chat" | "routine" | "followup" | "group";

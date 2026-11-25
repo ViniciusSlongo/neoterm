@@ -158,6 +158,7 @@ export class TurnEngine {
     const started = Date.now();
     const parts: MessagePart[] = [];
     try {
+      const scope = scopeOf(spec.agent, spec.mode, spec.readOnly);
       const base: Omit<ClaudeTurn, "sessionId" | "resume"> = {
         prompt: spec.prompt,
         cwd: spec.cwd,
@@ -169,8 +170,9 @@ export class TurnEngine {
           neotermTools: Boolean(token),
           ...(spec.readOnly ? { readOnly: true } : {}),
           ...(spec.extraSystem ? { extra: spec.extraSystem } : {}),
+          tools: scope.tools,
         }),
-        ...scopeOf(spec.agent, spec.mode, spec.readOnly),
+        ...scope,
         ...(token && mcpUrl ? { mcp: { url: mcpUrl, token } } : {}),
       };
       let resultText: string;

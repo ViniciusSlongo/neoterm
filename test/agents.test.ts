@@ -180,6 +180,12 @@ describe("AGENT.md", () => {
     assert.match(file, /unattended: \[ Read, Glob, Grep, WebSearch, WebFetch, Bash \]/);
     assert.match(file, /# Escopo sozinho, em rotinas/);
     assert.equal((await t.neoterm.state()).attention.some((entry) => entry.id === item.id), false);
+    // O agente fica sabendo na conversa, no próximo turno, e só uma vez.
+    await t.neoterm.chat("pede", "pode rodar agora?");
+    assert.match(fakeCalls().at(-1)!.prompt, /^\[Avisos do neoterm desde a sua última resposta\]\n- A pessoa liberou Bash para pede, também quando roda sozinho\.\n\npode rodar agora\?$/);
+    assert.match(argOf(fakeCalls().at(-1)!, "--append-system-prompt") ?? "", /ferramentas de trabalho: .*Bash/);
+    await t.neoterm.chat("pede", "e agora?");
+    assert.equal(fakeCalls().at(-1)!.prompt, "e agora?");
   });
 });
 

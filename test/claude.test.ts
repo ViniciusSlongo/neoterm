@@ -76,5 +76,20 @@ describe("argumentos do claude", () => {
     assert.equal(args[args.indexOf("--setting-sources") + 1], "project");
     assert.ok(args.includes("--strict-mcp-config"));
     assert.ok(!args.includes("--bare"), "--bare desliga o login do plano");
+    assert.equal(args[args.indexOf("--system-prompt-snapshot") + 1], "off", "o prompt de cada turno vale");
+  });
+});
+
+describe("ferramentas do neoterm na tela", () => {
+  it("mostra o que importa, não o JSON", () => {
+    assert.equal(
+      describeToolInput("mcp__neoterm__create_routine", { title: "revisar-emails", cron: "0 9 * * 1-5", instruction: "x" }, cwd),
+      "revisar-emails · 0 9 * * 1-5",
+    );
+    assert.equal(describeToolInput("mcp__neoterm__remember", { fact: "prefere respostas curtas" }, cwd), "prefere respostas curtas");
+    assert.equal(
+      describeToolInput("mcp__neoterm__schedule_followup", { minutes: 60, reason: "conferir o build" }, cwd),
+      "em 60 min · conferir o build",
+    );
   });
 });

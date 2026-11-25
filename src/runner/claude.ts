@@ -70,6 +70,12 @@ export function claudeArgs(turn: ClaudeTurn): string[] {
     turn.model,
     "--append-system-prompt",
     turn.systemPrompt,
+    // Por padrão o Claude Code grava o prompt de sistema na primeira mensagem e o reusa em toda
+    // continuação, mesmo que depois venha outro texto. O neoterm monta o prompt a cada turno (o
+    // AGENT.md editado, a memória nova, se é rotina ou conversa, as ferramentas desta execução),
+    // então ele precisa ser lido de novo a cada vez.
+    "--system-prompt-snapshot",
+    "off",
     "--tools",
     turn.tools.join(","),
     // Ninguém responde pedidos de permissão: o que precisaria perguntar é negado na hora.
@@ -231,6 +237,14 @@ export function describeToolInput(name: string, input: unknown, cwd: string): st
   };
   const path = pick("file_path", "notebook_path", "path");
   let detail: string;
+  if (name.startsWith("mcp__")) {
+    // As ferramentas do neoterm: o nome da rotina, o fato, o motivo; e o horário, se houver.
+    const minutes = typeof input.minutes === "number" ? `em ${input.minutes} min` : undefined;
+    detail = [pick("title", "routine", "fact", "text", "tool"), pick("cron"), minutes, pick("reason")]
+      .filter(Boolean)
+      .join(" · ");
+    return truncate(firstLine(detail || JSON.stringify(input)), 120);
+  }
   switch (name) {
     case "Bash":
       detail = pick("command") ?? "";

@@ -21,6 +21,11 @@ export type PromptContext = {
   neotermTools?: boolean;
   /** Contexto a mais, como o do grupo em que está. */
   extra?: string;
+  /**
+   * As ferramentas desta execução. Ditas com todas as letras: numa sessão continuada, o agente
+   * confia no que disse antes ("não tenho Bash") mesmo depois de a pessoa liberar.
+   */
+  tools?: readonly string[];
 };
 
 export async function buildSystemPrompt(
@@ -54,7 +59,7 @@ export function renderSystemPrompt(
     files.aboutPerson ? tag("about_the_person", files.aboutPerson) : "",
     files.memory ? tag("memory", files.memory) : "",
     context.neotermTools ? tag("neoterm_tools", toolsText(context.mode)) : "",
-    tag("run_mode", runModeText(context.mode, context.readOnly)),
+    tag("run_mode", runModeText(context.mode, context.readOnly, context.tools)),
     tag("today", `Hoje é ${formatDate(context.now, context.timeZone)} (fuso ${context.timeZone}).`),
   ];
   return sections.filter(Boolean).join("\n\n");
@@ -71,12 +76,15 @@ function workspaceText(agent: AgentDefinition): string {
   return lines.join("\n");
 }
 
-function runModeText(mode: RunMode, readOnly = false): string {
+function runModeText(mode: RunMode, readOnly = false, tools?: readonly string[]): string {
+  const available = tools
+    ? `\nNesta execução você tem estas ferramentas de trabalho: ${tools.length > 0 ? tools.join(", ") : "nenhuma"}. Vale o que está aqui, mesmo que antes nesta conversa tenha sido diferente.`
+    : "";
   const base =
     mode === "interactive"
       ? "A pessoa está acompanhando esta conversa agora."
       : "Ninguém está acompanhando agora: você está trabalhando sozinho. Use só as ferramentas que tem; se precisar de uma que não tem, peça com request_access, diga o que faltou e siga com o que der, sem tentar contornar.";
-  return readOnly ? `${base}\nEsta execução só avisa: leia, verifique e informe, sem mudar nada.` : base;
+  return `${base}${available}${readOnly ? "\nEsta execução só avisa: leia, verifique e informe, sem mudar nada." : ""}`;
 }
 
 function toolsText(mode: RunMode): string {

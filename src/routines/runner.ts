@@ -7,7 +7,7 @@ import { followups, messages, routines, runs } from "../db/schema.ts";
 import type { GroupEngine } from "../groups/engine.ts";
 import { getGroupById } from "../groups/store.ts";
 import type { TurnOutcome } from "../runner/turn.ts";
-import { agentRowById, conversationById, conversationSession } from "../store/conversations.ts";
+import { agentRowById, conversationById, conversationSession, withNotices } from "../store/conversations.ts";
 import type { Followup } from "./followups.ts";
 import { describeCron } from "./schedule.ts";
 import type { Routine } from "./store.ts";
@@ -63,6 +63,7 @@ export class RoutineRunner {
       } else {
         outcome = await engine.queue.run([agentKey(agentRow.slug)], async () => {
           const agent = await loadAgent(agentRow.slug);
+          const prompt = await withNotices(db, conversation.id, agentRow.id, routinePrompt(routine));
           await db.insert(messages).values({
             conversationId: conversation.id,
             author: "routine",
@@ -80,7 +81,7 @@ export class RoutineRunner {
             mode: "unattended",
             readOnly: routine.mode === "notify",
             routineId: routine.id,
-            prompt: routinePrompt(routine),
+            prompt,
             cwd: agent.workspace,
             session: conversationSession(db, conversation),
           });
@@ -196,6 +197,8 @@ export class RoutineRunner {
       bus.changed("messages", { kind: "agent", slug: agentRow.slug });
       return await engine.queue.run([agentKey(agentRow.slug)], async () => {
         const agent = await loadAgent(agentRow.slug);
+        const base = `[Retorno que você agendou]\nMotivo: ${followup.reason}${followup.instruction ? `\nO que fazer: ${followup.instruction}` : ""}\n\nFaça o que tinha ficado e responda para a pessoa.`;
+        const prompt = await withNotices(db, conversation.id, agentRow.id, base);
         return engine.execute({
           agent,
           agentRow,
@@ -203,7 +206,7 @@ export class RoutineRunner {
           scope: { kind: "agent", slug: agentRow.slug },
           trigger: "followup",
           mode: "unattended",
-          prompt: `[Retorno que você agendou]\nMotivo: ${followup.reason}${followup.instruction ? `\nO que fazer: ${followup.instruction}` : ""}\n\nFaça o que tinha ficado e responda para a pessoa.`,
+          prompt,
           cwd: agent.workspace,
           session: conversationSession(db, conversation),
         });
