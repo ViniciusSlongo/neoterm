@@ -53,6 +53,7 @@ const SettingsPatch = z.object({
     .nullable()
     .optional(),
   defaultModel: z.string().min(1).optional(),
+  notesPinned: z.boolean().optional(),
 });
 const StopProcesses = z.object({ pids: z.array(z.number().int().positive()).optional(), all: z.boolean().optional() });
 const GroupPatch = z.object({
@@ -255,6 +256,8 @@ export function createApp(neoterm: Neoterm): Hono {
   app.put("/agents/:slug/notes", async (c) => {
     const { text } = await body(c.req.raw, Notes);
     await writeNotes(c.req.param("slug"), text);
+    // A lateral mostra quem tem notas e tarefas abertas.
+    bus.changed("agents");
     return c.json({ ok: true });
   });
   app.post("/agents/:slug/pause", async (c) => {

@@ -481,6 +481,49 @@ describe("a interface", () => {
     await seen("mensagem para analista");
   });
 
+  it("ctrl+n abre as notas; ctrl+t faz tarefas; ctrl+p fixa ao lado; a lateral lembra", async () => {
+    const file = join(HOME, "agents", "analista", "notas.txt");
+    writeFileSync(file, "");
+    await press("\x0e"); // ctrl+n
+    await seen("NOTAS");
+    await type("ligar pro cliente");
+    await press("\x14"); // ctrl+t: vira tarefa
+    await press(KEY.enter);
+    await type("mandar o resumo");
+    await press("\x14");
+    await press(KEY.up);
+    await press("\x14"); // marca a primeira como feita
+    await waitFor(() => readFileSync(file, "utf8") === "- [x] ligar pro cliente\n- [ ] mandar o resumo");
+    await seen("1/2 feitas");
+    // Fora da linha do cursor, as tarefas aparecem desenhadas.
+    await press("\x0e"); // volta à conversa
+    await seen("☑ ligar pro cliente");
+    await seen("☐ mandar o resumo");
+    // Lembrete na lateral: 1 tarefa aberta.
+    await seen(/analista ☐1/);
+    // Fixar: trocando de agente, as notas continuam abertas (as do outro).
+    await press("\x0e");
+    await press("\x10"); // ctrl+p
+    await seen("notas fixadas");
+    await press("\x0e");
+    await press(KEY.down);
+    await seen(/dev\s+· Implementação/);
+    await seen("NOTAS · fixadas");
+    await press(KEY.up);
+    await seen("☐ mandar o resumo");
+    assert.equal((await t.api<{ notesPinned?: boolean }>("/settings")).body.notesPinned, true);
+    // Soltar e fechar.
+    await press("\x0e");
+    await press("\x10");
+    await seen("notas soltas");
+    await press(KEY.escape);
+    await waitFor(() => !frame().includes("NOTAS"));
+    // Fechadas, o cabeçalho lembra das tarefas abertas.
+    await seen(/☐ 1 tarefa \(ctrl\+n\)/);
+    writeFileSync(file, "");
+    await t.api("/agents/analista/notes", { method: "PUT", body: { text: "" } });
+  });
+
   it("troca de agente com ↑↓ quando não há texto", async () => {
     await press(KEY.down);
     await seen(/dev\s+· Implementação/);

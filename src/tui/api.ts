@@ -49,7 +49,7 @@ export type NewRoutineInput = {
   mode: RoutineMode;
 };
 
-export type UiSettings = { defaultModel: string; timezone: string; accent?: string };
+export type UiSettings = { defaultModel: string; timezone: string; accent?: string; notesPinned?: boolean };
 
 export interface NeotermApi {
   state(): Promise<NeotermState>;
@@ -80,7 +80,7 @@ export interface NeotermApi {
   stopProcesses(slug: string, target: { pids: number[] } | { all: true }): Promise<number[]>;
   /** As preferências (cor da interface, modelo padrão) e a mudança. */
   settings(): Promise<UiSettings>;
-  saveSettings(patch: { accent?: string | null; defaultModel?: string }): Promise<UiSettings>;
+  saveSettings(patch: { accent?: string | null; defaultModel?: string; notesPinned?: boolean }): Promise<UiSettings>;
   /** O resumo do painel. */
   dashboard(): Promise<Dashboard>;
   /** As notas de quem usa sobre um agente: o texto e o arquivo onde ficam. */

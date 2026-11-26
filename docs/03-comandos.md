@@ -29,6 +29,7 @@ Num grupo, `@nome` chama um agente e `@você` é para você.
 | `enter` | envia |
 | `shift+enter` | nova linha (ou `option+enter`, `ctrl+j`) |
 | `ctrl+v` | cola uma imagem do clipboard |
+| `ctrl+n` | abre as notas; abertas, alterna com a conversa |
 | `cmd+backspace` | apaga a palavra (também `option+backspace`, `ctrl+w`) |
 | `←→`, `option+←→` | anda pelo texto, por letra ou palavra |
 | `↑↓` | sobe e desce no texto; sem texto, troca de conversa |
@@ -61,6 +62,15 @@ Num grupo, `@nome` chama um agente e `@você` é para você.
 | `.` | mostra os ocultos |
 | `~` | vai para a home (nos formulários) |
 | `esc` | fecha |
+
+## Notas
+
+| Tecla | O que faz |
+| --- | --- |
+| `ctrl+t` | marca ou desmarca a tarefa da linha (ou transforma a linha em tarefa) |
+| `ctrl+p` | fixa ao lado: as notas ficam abertas em todo agente |
+| `ctrl+n`, `tab` | volta à conversa |
+| `esc` | fecha (fixadas: volta à conversa) |
 
 ## Formulários
 

@@ -13,6 +13,7 @@ import { renderIntegrations } from "./integrations.ts";
 import type { Integrations } from "../integrations.ts";
 import type { Dashboard } from "../dashboard.ts";
 import * as editor from "./editor.ts";
+import { countTasks, parseTask, toggleTask } from "../agents/tasks.ts";
 import { clipboardImage, expandImages, pastedImages, shortenImages } from "./images.ts";
 import { type Browser, browserKey, load as loadBrowser, newBrowser, renderBrowser } from "./browser.ts";
 import { referenceFor } from "./files.ts";
@@ -532,6 +533,8 @@ export function App({
 
   // ---------- configuração: cor e modelo padrão ----------
   const [savedAccent, setSavedAccent] = useState(DEFAULT_ACCENT);
+  // As notas fixadas ficam abertas ao lado da conversa e acompanham o agente aberto.
+  const [notesPinned, setNotesPinned] = useState(false);
   const [defaultModel, setDefaultModel] = useState("claude-opus-5-5");
   const [configIndex, setConfigIndex] = useState(0);
   const [customHex, setCustomHex] = useState<string | null>(null);
@@ -549,6 +552,7 @@ export function App({
       (settings) => {
         setSavedAccent(settings.accent ?? DEFAULT_ACCENT);
         setDefaultModel(settings.defaultModel);
+        setNotesPinned(Boolean(settings.notesPinned));
       },
       () => {},
     );
@@ -1045,6 +1049,7 @@ export function App({
     if (key.pageDown) return scrollBy(-Math.max(viewport.height - 2, 1));
     if (key.ctrl && input === "v") return pasteClipboardImage();
     if (key.ctrl && input === "r") return openRoutines();
+    if (key.ctrl && input === "n") return toggleNotes();
     // Sem bracketed paste, a colagem chega aqui como um bloco de vários caracteres.
     if (input.length > 1 && !key.ctrl && !key.meta && !key.return) return paste(input);
     // Sempre a partir do estado mais recente: teclas que chegam juntas não se atropelam.
@@ -1087,39 +1092,75 @@ export function App({
   // E ao fechar a interface.
   useEffect(() => () => void saveNotes(notesRef.current), [saveNotes]);
 
-  const openNotes = (slug: string) => {
-    if (notesRef.current?.slug === slug) return setFocus("notes");
+  /** Abre as notas de um agente; `focus` false só mostra ao lado (as fixadas, ao trocar de conversa). */
+  const openNotes = (slug: string, options: { focus?: boolean } = {}) => {
+    const focusIt = options.focus ?? true;
+    if (notesRef.current?.slug === slug) return focusIt ? setFocus("notes") : undefined;
     void saveNotes(notesRef.current);
     api.notes(slug).then(
       ({ text, path }) => {
+        if (currentRef.current !== `agent:${slug}`) return;
         notesTop.current = 0;
         setNotes({ slug, draft: { text, cursor: [...text].length }, saved: text, path, saving: false, failed: false });
-        setFocus("notes");
+        if (focusIt) setFocus("notes");
       },
       (error: Error) => say(`não abri as notas: ${error.message}`),
     );
   };
-  const closeNotes = () => {
+  /** Fecha o painel; fixado, o esc só devolve o cursor à conversa. */
+  const closeNotes = (force = false) => {
     void saveNotes(notesRef.current);
+    if (notesPinned && !force) return setFocus("main");
     setNotes(null);
     setFocus("main");
   };
-  // As notas são do agente da conversa: trocou de conversa, elas fecham (salvas).
+  /** ctrl+n: abre as notas; abertas, alterna entre elas e a conversa. */
+  const toggleNotes = () => {
+    if (!scope || scope.kind !== "agent") return say("as notas são de cada agente: abra a conversa com um");
+    if (!notesRef.current || notesRef.current.slug !== scope.slug) return openNotes(scope.slug);
+    setFocus((value) => (value === "notes" ? "main" : "notes"));
+  };
+  const togglePin = () => {
+    const next = !notesPinned;
+    setNotesPinned(next);
+    void api.saveSettings({ notesPinned: next }).catch(() => {});
+    say(next ? "notas fixadas: ficam abertas ao lado de cada agente" : "notas soltas: esc fecha");
+  };
+  // Trocou de conversa: fixadas, mostram as do agente novo; soltas, fecham (salvas).
   useEffect(() => {
     const open = notesRef.current;
+    const agentSlug = currentKey.startsWith("agent:") ? currentKey.slice("agent:".length) : null;
     if (open && currentKey !== `agent:${open.slug}`) {
       void saveNotes(open);
       setNotes(null);
       setFocus((value) => (value === "notes" ? "main" : value));
     }
-  }, [currentKey, saveNotes]);
+    if (notesPinned && agentSlug && open?.slug !== agentSlug) openNotes(agentSlug, { focus: false });
+  }, [currentKey, saveNotes, notesPinned]);
 
   const editNotes = (change: (draft: editor.Draft) => editor.Draft) =>
     setNotes((entry) => (entry ? { ...entry, draft: change(entry.draft) } : entry));
 
   const handleNotes = (input: string, key: InkKey) => {
     if (key.escape) return closeNotes();
-    if (key.tab) return setFocus("main");
+    if (key.tab || (key.ctrl && input === "n")) return setFocus("main");
+    if (key.ctrl && input === "p") return togglePin();
+    // ctrl+t marca ou desmarca a tarefa da linha (e transforma uma linha em tarefa).
+    if (key.ctrl && input === "t") {
+      return editNotes((draft) => {
+        const chars = [...draft.text];
+        const before = chars.slice(0, draft.cursor).join("");
+        const start = before.lastIndexOf("\n") + 1;
+        const endAt = draft.text.indexOf("\n", before.length);
+        const end = endAt === -1 ? draft.text.length : endAt;
+        const line = draft.text.slice(start, end);
+        const next = toggleTask(line);
+        const text = draft.text.slice(0, start) + next + draft.text.slice(end);
+        const column = [...before.slice(start)].length;
+        const shift = [...next].length - [...line].length;
+        return { text, cursor: [...draft.text.slice(0, start)].length + Math.max(column + shift, 0) };
+      });
+    }
     if (key.ctrl && input === "s") return void saveNotes(notesRef.current);
     // Nas notas o enter é só quebra de linha.
     if (key.return || isNewlineKey(input, key)) return editNotes((draft) => editor.insert(draft, "\n"));
@@ -1277,14 +1318,32 @@ export function App({
     const height = Math.max(notesArea.height, 1);
     notesTop.current = followCursor(open.draft, notesTop.current, height);
     const status = open.failed ? "não salvo" : open.saving ? "salvando…" : open.draft.text === open.saved ? "salvo" : "editando";
+    const tasks = countTasks(open.draft.text);
+    // A linha do cursor aparece como está escrita (para editar); as outras, com as tarefas desenhadas.
+    const cursorLine = editor.position(open.draft).line;
+    const raw = renderLines(open.draft, { first: notesTop.current, count: height, focused });
     const area = open.draft.text
-      ? renderLines(open.draft, { first: notesTop.current, count: height, focused })
+      ? open.draft.text
+          .split("\n")
+          .slice(notesTop.current, notesTop.current + height)
+          .map((line, at) => {
+            const index = notesTop.current + at;
+            const task = parseTask(line);
+            if ((focused && index === cursorLine) || !task) return raw[at];
+            return h(
+              Text,
+              { key: index, wrap: "wrap" },
+              task.indent,
+              h(Text, { color: task.done ? theme.green : theme.accent }, task.done ? "☑ " : "☐ "),
+              h(Text, { color: task.done ? theme.muted : undefined, strikethrough: task.done }, task.text || " "),
+            );
+          })
       : [
           h(
             Text,
             { key: "empty", wrap: "wrap" },
             focused ? h(Text, { inverse: true }, " ") : null,
-            h(Text, { color: theme.muted }, focused ? " escreva aqui" : "sem notas"),
+            h(Text, { color: theme.muted }, focused ? " escreva aqui · ctrl+t cria uma tarefa" : "sem notas"),
           ),
         ];
     return h(
@@ -1305,10 +1364,16 @@ export function App({
         Text,
         { wrap: "truncate-end" },
         h(Text, { bold: true, color: focused ? theme.accent : undefined }, "NOTAS"),
+        notesPinned ? h(Text, { color: theme.accent }, " · fixadas") : null,
+        tasks.open + tasks.done ? h(Text, { color: theme.muted }, ` · ${tasks.done}/${tasks.open + tasks.done} feitas`) : null,
         h(Text, { color: open.failed ? theme.red : theme.muted }, ` · ${status}`),
       ),
       h(Box, { ref: notesAreaRef, flexDirection: "column", flexGrow: 1, flexShrink: 1, flexBasis: 0, overflow: "hidden", marginTop: 1 }, ...area),
-      h(Text, { color: theme.muted, wrap: "truncate-start" }, open.path.replace(homedir(), "~")),
+      h(
+        Text,
+        { color: theme.muted, wrap: "truncate-end" },
+        focused ? `ctrl+t tarefa · ctrl+p ${notesPinned ? "solta" : "fixa"} · ctrl+n conversa` : "ctrl+n edita",
+      ),
     );
   }
 
@@ -1344,12 +1409,20 @@ export function App({
       // Trabalhando: um spinner girando logo depois do nome.
       const spinner = busy ? ` ${SPINNER[frame % SPINNER.length]}` : "";
       const dot = unread.has(`agent:${agent.slug}`) ? " •" : "";
+      // Lembrete das notas: tarefas abertas (☐ 2) ou só que há notas (✎).
+      const noteMark = agent.notes?.openTasks ? ` ☐${agent.notes.openTasks}` : agent.notes?.has ? " ✎" : "";
       sidebar.push(
         row(
           `a-${agent.slug}`,
           active,
-          [glyph, h(Text, { bold: active }, ` ${agent.slug}`), h(Text, { color: theme.green }, spinner), h(Text, { color: theme.accent }, dot)],
-          `○ ${agent.slug}${spinner}${dot}`,
+          [
+            glyph,
+            h(Text, { bold: active }, ` ${agent.slug}`),
+            h(Text, { color: theme.green }, spinner),
+            h(Text, { color: theme.accent }, dot),
+            h(Text, { color: theme.muted }, noteMark),
+          ],
+          `○ ${agent.slug}${spinner}${dot}${noteMark}`,
           agent.state === "paused" && !busy ? "pausado" : "",
         ),
       );
@@ -1446,13 +1519,17 @@ export function App({
     // A memória que ele está usando: o turno e os serviços que deixou rodando.
     const memory = processes && processes.totalBytes > 0 ? ` · ${bytes(processes.totalBytes)}` : "";
     const leftOver = processes?.processes.filter((entry) => entry.kind === "service" && !entry.inTurn).length ?? 0;
+    // Tarefas abertas nas notas, quando elas não estão à vista.
+    const openTasks = agentState.notes?.openTasks ?? 0;
+    const taskReminder =
+      openTasks && !(notes && notes.slug === agentState.slug) ? h(Text, { color: theme.accent }, ` · ☐ ${openTasks} ${openTasks === 1 ? "tarefa" : "tarefas"} (ctrl+n)`) : null;
     const services = leftOver ? h(Text, { color: theme.amber }, ` · ◆ ${leftOver} ${leftOver === 1 ? "serviço" : "serviços"}`) : null;
     headerRight =
       agentState.state === "running"
-        ? h(Text, null, h(Text, { color: theme.green }, "● "), h(Text, { color: theme.muted }, `rodando${memory}`), services)
+        ? h(Text, null, h(Text, { color: theme.green }, "● "), h(Text, { color: theme.muted }, `rodando${memory}`), services, taskReminder)
         : agentState.state === "paused"
-          ? h(Text, null, h(Text, { color: theme.amber }, "‖ pausado"), h(Text, { color: theme.muted }, memory), services)
-          : h(Text, null, h(Text, { color: theme.muted }, `○ livre${memory || (agentState.model ? ` · ${agentState.model}` : "")}`), services);
+          ? h(Text, null, h(Text, { color: theme.amber }, "‖ pausado"), h(Text, { color: theme.muted }, memory), services, taskReminder)
+          : h(Text, null, h(Text, { color: theme.muted }, `○ livre${memory || (taskReminder ? "" : agentState.model ? ` · ${agentState.model}` : "")}`), services, taskReminder);
   } else if (groupState) {
     headerLeft = h(
       Text,
@@ -1668,7 +1745,7 @@ export function App({
       ? "digite para filtrar · ↑↓ escolhe · enter abre · esc limpa o filtro"
       : "↑↓ anda · → ou enter abre/insere · ← sobe · / filtra · tab conversa · esc fecha";
   } else if (mode === "help") hints = "↑↓ ou roda do mouse rolam · esc volta";
-  else if (focus === "notes") hints = "salva sozinho · tab conversa · esc fecha";
+  else if (focus === "notes") hints = `ctrl+t tarefa · ctrl+p ${notesPinned ? "solta" : "fixa ao lado"} · ctrl+n conversa · esc ${notesPinned ? "volta" : "fecha"}`;
   else if (focus === "sidebar") hints = "↑↓ enter abre · e edita · n agente · g grupo · ? ajuda";
   else if (isConfig) hints = customHex !== null ? "digite #RRGGBB · enter aplica · esc desiste" : "↑↓ prévia da cor · enter salva · ←→ modelo · esc lateral";
   else if (isIntegrations) hints = "r verifica de novo · j/k rolam · esc lateral";
@@ -1676,7 +1753,7 @@ export function App({
   else if (mode === "processes") hints = confirmStop ? `${confirmStop === "all" ? "X" : "x"} de novo encerra · qualquer outra tecla desiste` : "↑↓ escolhe · x encerra · X encerra todos · enter detalhe · esc volta";
   else if (mode === "routines") hints = "↑↓ escolhe · n nova · espaço liga/desliga · x roda agora · d apaga · esc volta";
   else if (mode === "attention") hints = "esc volta para a lateral";
-  else hints = `enter envia · shift+enter nova linha · ${notes ? ":notas volta às notas · " : ""}esc lateral · :ajuda`;
+  else hints = `enter envia · shift+enter nova linha · ctrl+n notas · esc lateral · :ajuda`;
   const usage = state?.planUsage;
   const plan = usage
     ? ` · plano${usage.fiveHour ? ` ${Math.round(usage.fiveHour.utilization * 100)}%` : ""}${usage.sevenDay ? ` · semana ${Math.round(usage.sevenDay.utilization * 100)}%` : ""}`

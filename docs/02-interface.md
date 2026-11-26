@@ -42,12 +42,18 @@ Em qualquer lugar, `:ajuda` (na conversa) ou `?` (na lateral) mostra todos os co
 
 ## Painéis à direita
 
-- `:notas`: suas anotações sobre o agente, num `notas.txt` na pasta dele. Salvam sozinhas. São
-  suas: o agente não as vê.
+- **Notas** (`ctrl+n`, ou `:notas`): suas anotações sobre o agente, num `notas.txt` na pasta dele.
+  Salvam sozinhas e são suas: o agente não as vê.
+  - **Lista de tarefas**: `ctrl+t` transforma a linha em tarefa e marca ou desmarca. Aparecem como
+    `☐` e `☑`; no arquivo ficam `- [ ]` e `- [x]`.
+  - **Fixar** (`ctrl+p`): as notas ficam abertas ao lado da conversa e acompanham o agente que você
+    abrir. Vale até soltar, inclusive depois de fechar a interface.
+  - **Lembrete**: na lateral, `☐2` depois do nome são tarefas abertas e `✎` são notas; no
+    cabeçalho da conversa aparecem as tarefas abertas quando as notas estão fechadas.
 - `:path`: a lista de arquivos do escopo. Escolha um e o caminho entra na mensagem. Funciona no
   fim de uma frase: `compare com :path` abre a lista sem enviar.
 
-`tab` alterna entre o painel e a mensagem; `esc` fecha.
+`ctrl+n` (nas notas) ou `tab` alterna entre o painel e a mensagem; `esc` fecha.
 
 ## Telas
 

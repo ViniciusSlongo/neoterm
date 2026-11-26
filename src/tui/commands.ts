@@ -44,6 +44,7 @@ export const KEYS: { where: string; keys: [string, string][] }[] = [
       ["enter", "envia"],
       ["shift+enter", "nova linha (ou option+enter, ctrl+j)"],
       ["ctrl+v", "cola uma imagem do clipboard"],
+      ["ctrl+n", "abre as notas; abertas, alterna com a conversa"],
       ["cmd+backspace", "apaga a palavra"],
       ["roda do mouse, pgup/pgdn", "rolam a conversa"],
       ["↑↓ sem texto", "troca de conversa"],
@@ -73,6 +74,15 @@ export const KEYS: { where: string; keys: [string, string][] }[] = [
       ["espaço", "escolhe a pasta"],
       ["/", "filtra pelo nome"],
       ["esc", "fecha"],
+    ],
+  },
+  {
+    where: "notas",
+    keys: [
+      ["ctrl+t", "marca ou desmarca a tarefa da linha"],
+      ["ctrl+p", "fixa ao lado: ficam abertas em todo agente"],
+      ["ctrl+n, tab", "volta à conversa"],
+      ["esc", "fecha (fixadas: volta à conversa)"],
     ],
   },
   {
