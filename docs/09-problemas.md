@@ -28,8 +28,9 @@ Alguns terminais (o Terminal do macOS) não distinguem o `shift+enter`. Use `opt
 `ctrl+j`.
 
 **Não consigo selecionar texto com o mouse**
-A interface usa a roda do mouse para rolar. Segure `option` (iTerm2) ou `shift` (Ghostty, kitty)
-para selecionar. Para desligar a captura do mouse: `NEOTERM_MOUSE=0 neoterm`.
+A interface usa o mouse para rolar. Aperte `ctrl+s` (modo seleção), selecione e copie com `cmd+c`,
+e `esc` para voltar. Ou segure `option` (iTerm2) ou `shift` (Ghostty, kitty) enquanto arrasta. Para
+desligar a captura do mouse de vez: `NEOTERM_MOUSE=0 neoterm`.
 
 **A rotina não rodou no horário**
 O Mac estava dormindo ou o motor desligado: horários perdidos são pulados. Veja as últimas

@@ -31,6 +31,9 @@ let OPENED_IN = "";
 let ui: ReturnType<typeof render>;
 // O que o ctrl+v encontra no clipboard: o caminho da imagem salva, ou null.
 let clipboard: string | null = null;
+// O que a interface pediu ao terminal sobre o mouse, e o que copiou.
+const mouseCalls: boolean[] = [];
+let copied = "";
 const frame = () => ui.lastFrame() ?? "";
 const press = async (...keys: string[]) => {
   for (const key of keys) {
@@ -66,7 +69,12 @@ before(async () => {
   makeFolder("aberto-aqui/codigo");
   makeFolder("aberto-aqui/docs/contratos");
   writeFileSync(join(OPENED_IN, "solto.txt"), "");
-  ui = render(h(App, { api: httpApi(t.base), cwd: OPENED_IN, readClipboardImage: async () => clipboard }));
+  ui = render(h(App, { api: httpApi(t.base), cwd: OPENED_IN, readClipboardImage: async () => clipboard,
+    setMouse: (on: boolean) => mouseCalls.push(on),
+    copyToClipboard: async (text: string) => {
+      copied = text;
+    },
+  }));
   await seen("AGENTES");
 });
 after(async () => {
@@ -522,6 +530,36 @@ describe("a interface", () => {
     await seen(/☐ 1 tarefa \(ctrl\+n\)/);
     writeFileSync(file, "");
     await t.api("/agents/analista/notes", { method: "PUT", body: { text: "" } });
+  });
+
+  it("ctrl+s entra no modo seleção (desliga a captura do mouse); ↑↓ rolam sem trocar de agente; esc volta", async () => {
+    mouseCalls.length = 0;
+    await press("\x13");
+    await seen("MODO SELEÇÃO");
+    assert.deepEqual(mouseCalls, [false]);
+    await press(KEY.down);
+    assert.match(frame(), /analista\s+· Acompanhamento financeiro/);
+    await press(KEY.escape);
+    await waitFor(() => !frame().includes("MODO SELEÇÃO"));
+    assert.deepEqual(mouseCalls, [false, true]);
+    await seen("mensagem para analista");
+    // :selecionar também.
+    await type(":selecionar");
+    await press(KEY.enter);
+    await seen("MODO SELEÇÃO");
+    await press(KEY.escape);
+    await waitFor(() => !frame().includes("MODO SELEÇÃO"));
+  });
+
+  it("ctrl+y copia a última resposta do agente", async () => {
+    setScript({ analista: "Resposta **para** copiar." });
+    await type("me dá algo");
+    await press(KEY.enter);
+    await seen("Resposta para copiar.");
+    setScript({});
+    await press("\x19");
+    await seen("última resposta copiada");
+    assert.equal(copied, "Resposta **para** copiar.");
   });
 
   it("troca de agente com ↑↓ quando não há texto", async () => {

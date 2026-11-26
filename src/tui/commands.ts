@@ -3,7 +3,7 @@
  * docs leem daqui. Funcionam com ":" ou "/" na frente (:notas e /notas são o mesmo).
  */
 
-export type CommandName = "config" | "ajuda" | "notas" | "path" | "processos" | "editar" | "rotinas" | "pausar" | "retomar" | "painel" | "mcp";
+export type CommandName = "selecionar" | "copiar" | "config" | "ajuda" | "notas" | "path" | "processos" | "editar" | "rotinas" | "pausar" | "retomar" | "painel" | "mcp";
 
 export type Command = {
   name: CommandName;
@@ -26,6 +26,8 @@ export const COMMANDS: Command[] = [
   { name: "painel", aliases: ["dash"], description: "resumo do neoterm: motor, plano, agentes" },
   { name: "mcp", aliases: ["integracoes", "integrações"], description: "integrações do Claude Code (só ver)" },
   { name: "config", aliases: ["cor", "tema"], description: "cor da interface e modelo padrão dos agentes" },
+  { name: "selecionar", aliases: ["sel"], description: "modo seleção: selecione texto com o mouse e copie (ctrl+s)" },
+  { name: "copiar", aliases: ["copy"], description: "copia a última resposta do agente (ctrl+y)" },
 ];
 
 /** O comando digitado (":notas", "/ps", ":?"), ou `null` se o texto é uma mensagem. */
@@ -45,6 +47,8 @@ export const KEYS: { where: string; keys: [string, string][] }[] = [
       ["shift+enter", "nova linha (ou option+enter, ctrl+j)"],
       ["ctrl+v", "cola uma imagem do clipboard"],
       ["ctrl+n", "abre as notas; abertas, alterna com a conversa"],
+      ["ctrl+s", "modo seleção: selecione com o mouse, cmd+c copia, esc volta"],
+      ["ctrl+y", "copia a última resposta"],
       ["cmd+backspace", "apaga a palavra"],
       ["roda do mouse, pgup/pgdn", "rolam a conversa"],
       ["↑↓ sem texto", "troca de conversa"],

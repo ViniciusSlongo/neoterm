@@ -25,6 +25,7 @@ import { ACCENTS, DEFAULT_ACCENT, isHexColor, setAccent } from "./theme.ts";
 import { type ProcessView, renderProcesses } from "./processes.ts";
 import { bytes } from "./format.ts";
 import { captureMouse } from "./mouse.ts";
+import { copyText } from "./clipboard.ts";
 import { editKey, followCursor, isNewlineKey, renderLines } from "./textarea.ts";
 import { SPINNER, theme } from "./theme.ts";
 
@@ -271,10 +272,15 @@ export function App({
   api,
   cwd = process.cwd(),
   readClipboardImage = clipboardImage,
+  setMouse = () => {},
+  copyToClipboard = copyText,
 }: {
   api: NeotermApi;
   cwd?: string;
   readClipboardImage?: () => Promise<string | null>;
+  /** Liga ou desliga a captura do mouse no terminal (o modo seleção desliga). */
+  setMouse?: (on: boolean) => void;
+  copyToClipboard?: (text: string) => Promise<void>;
 }): ReactNode {
   const { exit } = useApp();
   const size = useWindowSize();
@@ -754,6 +760,36 @@ export function App({
     if (input === "X" && list.some((entry) => entry.kind === "service")) return setConfirmStop("all");
   };
 
+  // ---------- modo seleção e copiar ----------
+  // Com a captura do mouse ligada, o terminal não seleciona texto. O modo seleção desliga a captura;
+  // ↑↓ e pgup/pgdn rolam (muitos terminais mandam a roda como ↑↓ nesse modo); esc volta.
+  const [selecting, setSelecting] = useState(false);
+  const startSelecting = () => {
+    setSelecting(true);
+    setMouse(false);
+  };
+  const stopSelecting = () => {
+    setSelecting(false);
+    setMouse(true);
+  };
+  useEffect(() => () => setMouse(true), [setMouse]);
+  const handleSelecting = (input: string, key: InkKey) => {
+    if (key.escape || key.return || (key.ctrl && input === "s") || input === "q") return stopSelecting();
+    const step = key.pageUp || key.pageDown ? Math.max(viewport.height - 2, 1) : WHEEL_LINES;
+    const direction = key.upArrow || key.pageUp ? 1 : key.downArrow || key.pageDown ? -1 : 0;
+    if (!direction) return;
+    if (isPage || mode === "help") return scrollPage(-direction * step);
+    if (mode === "chat") scrollBy(direction * step);
+  };
+  const copyLastReply = () => {
+    const last = messages.findLast((message) => message.author === "agent" && message.text.trim());
+    if (!last) return say("nada para copiar ainda");
+    copyToClipboard(last.text).then(
+      () => say(`última resposta copiada (${[...last.text].length} caracteres)`),
+      (error: Error) => say(`não copiei: ${error.message}`),
+    );
+  };
+
   // ---------- ajuda ----------
   const helpReturn = useRef<{ mode: Mode; focus: typeof focus }>({ mode: "chat", focus: "main" });
   const openHelp = () => {
@@ -851,6 +887,10 @@ export function App({
         return openIntegrations();
       case "config":
         return openConfig();
+      case "selecionar":
+        return startSelecting();
+      case "copiar":
+        return copyLastReply();
       case "editar":
         return openEditForm(scope);
       case "path":
@@ -1241,6 +1281,11 @@ export function App({
   });
 
   useInput((input, key) => {
+    if (selecting) return handleSelecting(input, key);
+    // ctrl+s: modo seleção (fora de formulários e notas, onde ctrl+s salva).
+    if (key.ctrl && input === "s" && mode !== "form" && focus !== "notes") return startSelecting();
+    // ctrl+y: copia a última resposta da conversa.
+    if (key.ctrl && input === "y" && mode === "chat") return copyLastReply();
     if (mode === "form") return handleForm(input, key);
     if (mode === "help") {
       if (key.escape || key.return || input === "q" || input === "?") return closeHelp();
@@ -1733,7 +1778,9 @@ export function App({
   // ---------- rodapé ----------
   let hints: string;
   const removeHint = form?.remove ? " · ctrl+d exclui" : "";
-  if (mode === "form" && form?.confirmingRemove) {
+  if (selecting) {
+    hints = "MODO SELEÇÃO · arraste para selecionar, cmd+c copia · ↑↓ rolam · esc volta";
+  } else if (mode === "form" && form?.confirmingRemove) {
     hints = "ctrl+d de novo exclui · qualquer outra tecla desiste";
   } else if (mode === "form" && choosingFolders) {
     hints = "↑↓ anda · espaço escolhe · → entra · ← sobe · esc fecha a lista · tab próximo · ctrl+s salva";
@@ -1753,7 +1800,7 @@ export function App({
   else if (mode === "processes") hints = confirmStop ? `${confirmStop === "all" ? "X" : "x"} de novo encerra · qualquer outra tecla desiste` : "↑↓ escolhe · x encerra · X encerra todos · enter detalhe · esc volta";
   else if (mode === "routines") hints = "↑↓ escolhe · n nova · espaço liga/desliga · x roda agora · d apaga · esc volta";
   else if (mode === "attention") hints = "esc volta para a lateral";
-  else hints = `enter envia · shift+enter nova linha · ctrl+n notas · esc lateral · :ajuda`;
+  else hints = `enter envia · ctrl+n notas · ctrl+s selecionar · esc lateral · :ajuda`;
   const usage = state?.planUsage;
   const plan = usage
     ? ` · plano${usage.fiveHour ? ` ${Math.round(usage.fiveHour.utilization * 100)}%` : ""}${usage.sevenDay ? ` · semana ${Math.round(usage.sevenDay.utilization * 100)}%` : ""}`
@@ -1812,7 +1859,13 @@ export function App({
     h(
       Box,
       { justifyContent: "space-between", flexShrink: 0, paddingX: 1, borderStyle: "single", borderBottom: false, borderLeft: false, borderRight: false, borderColor: theme.border },
-      h(Box, { flexShrink: 1, overflow: "hidden" }, h(Text, { color: flash ? theme.accent : theme.muted, wrap: "truncate-end" }, flash ?? hints)),
+      h(
+        Box,
+        { flexShrink: 1, overflow: "hidden" },
+        selecting && !flash
+          ? h(Text, { wrap: "truncate-end", backgroundColor: theme.amber, color: theme.onAccent, bold: true }, ` ${hints} `)
+          : h(Text, { color: flash ? theme.accent : theme.muted, wrap: "truncate-end" }, flash ?? hints),
+      ),
       h(Box, { flexShrink: 0, marginLeft: 2 }, status),
     ),
   );

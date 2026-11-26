@@ -36,8 +36,11 @@ Em qualquer lugar, `:ajuda` (na conversa) ou `?` (na lateral) mostra todos os co
   ordem.
 - **Imagens**: cole o caminho de uma imagem ou use `ctrl+v` com um print no clipboard. No texto
   aparece `[imagem 1]`; o agente recebe o arquivo.
-- A roda do mouse rola só a conversa. Para selecionar texto com o mouse, segure `option` (iTerm2) ou
-  `shift` (Ghostty, kitty).
+- A roda do mouse rola só a conversa.
+- **Selecionar e copiar texto**: `ctrl+s` entra no modo seleção (o rodapé fica amarelo). Arraste
+  com o mouse e copie com `cmd+c`; `↑↓` rolam; `esc` volta. Para copiar a última resposta inteira,
+  `ctrl+y`. Sem entrar no modo, também dá para selecionar segurando `option` (iTerm2) ou `shift`
+  (Ghostty, kitty).
 - No cabeçalho: o estado do agente e, quando ele está rodando algo, a memória e os serviços dele.
 
 ## Painéis à direita

@@ -19,6 +19,8 @@ Escreva na conversa, com `:` ou `/` na frente (`:notas` e `/notas` são o mesmo)
 | `:painel` | `:dash` | resumo do neoterm: motor, plano, agentes |
 | `:mcp` | `:integracoes` | integrações do Claude Code (só ver) |
 | `:config` | `:cor`, `:tema` | cor da interface e modelo padrão dos agentes |
+| `:selecionar` | `:sel` | modo seleção: selecione texto com o mouse e copie (`ctrl+s`) |
+| `:copiar` | `:copy` | copia a última resposta do agente (`ctrl+y`) |
 
 Num grupo, `@nome` chama um agente e `@você` é para você.
 
@@ -30,6 +32,8 @@ Num grupo, `@nome` chama um agente e `@você` é para você.
 | `shift+enter` | nova linha (ou `option+enter`, `ctrl+j`) |
 | `ctrl+v` | cola uma imagem do clipboard |
 | `ctrl+n` | abre as notas; abertas, alterna com a conversa |
+| `ctrl+s` | modo seleção: arraste para selecionar, `cmd+c` copia, `esc` volta |
+| `ctrl+y` | copia a última resposta do agente |
 | `cmd+backspace` | apaga a palavra (também `option+backspace`, `ctrl+w`) |
 | `←→`, `option+←→` | anda pelo texto, por letra ou palavra |
 | `↑↓` | sobe e desce no texto; sem texto, troca de conversa |

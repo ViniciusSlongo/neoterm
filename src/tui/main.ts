@@ -9,8 +9,8 @@ import { App } from "./app.ts";
 const ALT_SCREEN_ON = "\x1b[?1049h\x1b[H\x1b[?7l";
 const ALT_SCREEN_OFF = "\x1b[?7h\x1b[?1049l";
 // Eventos de mouse (formato SGR): sem isso, o terminal transforma a roda em ↑↓, que trocam de
-// conversa. Com isso, a roda rola só a conversa. Selecionar texto passa a pedir uma tecla
-// modificadora, que depende do terminal (Option no iTerm2, Shift no Ghostty e no kitty).
+// conversa. Com isso, a roda rola só a conversa, mas o terminal não seleciona texto: para isso há
+// o modo seleção (ctrl+s), que desliga a captura enquanto dura.
 const MOUSE_ON = "\x1b[?1000h\x1b[?1006h";
 const MOUSE_OFF = "\x1b[?1006l\x1b[?1000l";
 
@@ -21,7 +21,10 @@ export async function runTui(): Promise<void> {
   const restore = () => process.stdout.write((mouse ? MOUSE_OFF : "") + ALT_SCREEN_OFF);
   process.once("exit", restore);
   // O protocolo de teclado kitty, onde o terminal tiver, separa o shift+enter do enter.
-  const instance = render(h(App, { api: httpApi() }), { exitOnCtrlC: true, kittyKeyboard: { mode: "auto" } });
+  const setMouse = (on: boolean) => {
+    if (mouse) process.stdout.write(on ? MOUSE_ON : MOUSE_OFF);
+  };
+  const instance = render(h(App, { api: httpApi(), setMouse }), { exitOnCtrlC: true, kittyKeyboard: { mode: "auto" } });
   try {
     await instance.waitUntilExit();
   } finally {
