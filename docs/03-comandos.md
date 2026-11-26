@@ -18,6 +18,7 @@ Escreva na conversa, com `:` ou `/` na frente (`:notas` e `/notas` são o mesmo)
 | `:retomar` | `:resume` | volta a rodar o que foi pausado |
 | `:painel` | `:dash` | resumo do neoterm: motor, plano, agentes |
 | `:mcp` | `:integracoes` | integrações do Claude Code (só ver) |
+| `:config` | `:cor`, `:tema` | cor da interface e modelo padrão dos agentes |
 
 Num grupo, `@nome` chama um agente e `@você` é para você.
 
@@ -44,7 +45,7 @@ Num grupo, `@nome` chama um agente e `@você` é para você.
 | `r` | rotinas |
 | `p` | pausa ou retoma |
 | `n`, `g` | novo agente, novo grupo |
-| `d`, `i` | painel, integrações |
+| `d`, `i`, `c` | painel, integrações, config |
 | `?` | ajuda |
 | `q` | sai (o motor continua) |
 

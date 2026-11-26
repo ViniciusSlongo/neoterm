@@ -27,6 +27,11 @@ const Settings = z.object({
     .string()
     .min(1)
     .default(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
+  /** A cor de destaque da interface (#RRGGBB); sem isto, o azul. */
+  accent: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/)
+    .optional(),
 });
 export type Settings = z.infer<typeof Settings>;
 

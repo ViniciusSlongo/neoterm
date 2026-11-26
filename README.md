@@ -47,6 +47,7 @@ Na interface, `n` cria o primeiro agente: nome, função e as pastas dele. Depoi
 - **Processos**: a memória de cada agente e os serviços que ele deixou rodando, para encerrar o
   que sobrou.
 - **Painel**: motor, plano, máquina e o trabalho do dia, numa tela.
+- **Do seu jeito**: escolha a cor da interface e o modelo padrão em `:config`.
 
 Tudo também pelo terminal: `neoterm ask analista "quanto entrou hoje?"`.
 

@@ -49,6 +49,8 @@ export type NewRoutineInput = {
   mode: RoutineMode;
 };
 
+export type UiSettings = { defaultModel: string; timezone: string; accent?: string };
+
 export interface NeotermApi {
   state(): Promise<NeotermState>;
   messages(scope: ViewScope): Promise<ViewMessage[]>;
@@ -76,6 +78,9 @@ export interface NeotermApi {
   /** Os processos do agente (o turno e os serviços que ele deixou rodando) e encerrar. */
   processes(slug: string): Promise<{ processes: AgentProcess[]; totalBytes: number }>;
   stopProcesses(slug: string, target: { pids: number[] } | { all: true }): Promise<number[]>;
+  /** As preferências (cor da interface, modelo padrão) e a mudança. */
+  settings(): Promise<UiSettings>;
+  saveSettings(patch: { accent?: string | null; defaultModel?: string }): Promise<UiSettings>;
   /** O resumo do painel. */
   dashboard(): Promise<Dashboard>;
   /** As notas de quem usa sobre um agente: o texto e o arquivo onde ficam. */
@@ -136,6 +141,8 @@ export function httpApi(base: string = DAEMON_URL): NeotermApi {
     createGroup: async (input) => void (await call("/groups", { body: input })),
     setPaused: async (slug, paused) => void (await call(`/agents/${slug}/${paused ? "pause" : "resume"}`, { body: {} })),
     dashboard: () => call<Dashboard>("/dashboard"),
+    settings: () => call<UiSettings>("/settings"),
+    saveSettings: (patch) => call<UiSettings>("/settings", { method: "PATCH", body: patch }),
     processes: (slug) => call<{ processes: AgentProcess[]; totalBytes: number }>(`/agents/${slug}/processes`),
     stopProcesses: async (slug, target) => (await call<{ stopped: number[] }>(`/agents/${slug}/processes/stop`, { body: target })).stopped,
     integrations: (refresh) => call<Integrations>(`/integrations${refresh ? "?refresh=1" : ""}`),

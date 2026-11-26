@@ -16,7 +16,7 @@ import { planReset, removeAgent, reset, setPaused } from "../agents/lifecycle.ts
 import { NOTES_MAX_LENGTH, readNotes, writeNotes } from "../agents/notes.ts";
 import { Neoterm } from "../app.ts";
 import { resolveAttention } from "../attention.ts";
-import { DAEMON_PORT, readSettings } from "../config.ts";
+import { DAEMON_PORT, readSettings, writeSettings } from "../config.ts";
 import { listIntegrations } from "../integrations.ts";
 import { agentProcesses, stopProcesses } from "../processes.ts";
 import { applyMigrations, connect, errorMessage } from "../db/client.ts";
@@ -46,6 +46,14 @@ import { runs } from "../db/schema.ts";
 const Text = z.object({ text: z.string().trim().min(1).max(100_000) });
 const Confirm = z.object({ confirm: z.literal(true) });
 const Notes = z.object({ text: z.string().max(NOTES_MAX_LENGTH) });
+const SettingsPatch = z.object({
+  accent: z
+    .string()
+    .regex(/^#[0-9a-fA-F]{6}$/, "use uma cor no formato #RRGGBB")
+    .nullable()
+    .optional(),
+  defaultModel: z.string().min(1).optional(),
+});
 const StopProcesses = z.object({ pids: z.array(z.number().int().positive()).optional(), all: z.boolean().optional() });
 const GroupPatch = z.object({
   folder: z.string().min(1).optional(),
@@ -124,6 +132,17 @@ export function createApp(neoterm: Neoterm): Hono {
   app.get("/health", (c) => c.json({ ok: true }));
   app.get("/state", async (c) => c.json(await neoterm.state()));
   app.get("/dashboard", async (c) => c.json(await neoterm.dashboard()));
+  // As preferências: a cor da interface e o modelo padrão dos agentes.
+  app.get("/settings", async (c) => c.json(await readSettings()));
+  app.patch("/settings", async (c) => {
+    const patch = await body(c.req.raw, SettingsPatch);
+    const current = await readSettings();
+    const next = { ...current, ...patch };
+    if (patch.accent === null) delete next.accent;
+    await writeSettings(next as Awaited<ReturnType<typeof readSettings>>);
+    bus.changed("settings");
+    return c.json(await readSettings());
+  });
   // As integrações (MCP) como o Claude Code as vê; ?refresh=1 testa de novo.
   app.get("/integrations", async (c) => c.json(await listIntegrations({ refresh: c.req.query("refresh") === "1" })));
 

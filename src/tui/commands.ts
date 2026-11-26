@@ -3,7 +3,7 @@
  * docs leem daqui. Funcionam com ":" ou "/" na frente (:notas e /notas são o mesmo).
  */
 
-export type CommandName = "ajuda" | "notas" | "path" | "processos" | "editar" | "rotinas" | "pausar" | "retomar" | "painel" | "mcp";
+export type CommandName = "config" | "ajuda" | "notas" | "path" | "processos" | "editar" | "rotinas" | "pausar" | "retomar" | "painel" | "mcp";
 
 export type Command = {
   name: CommandName;
@@ -25,6 +25,7 @@ export const COMMANDS: Command[] = [
   { name: "retomar", aliases: ["resume"], description: "volta a rodar o que foi pausado", agentOnly: true },
   { name: "painel", aliases: ["dash"], description: "resumo do neoterm: motor, plano, agentes" },
   { name: "mcp", aliases: ["integracoes", "integrações"], description: "integrações do Claude Code (só ver)" },
+  { name: "config", aliases: ["cor", "tema"], description: "cor da interface e modelo padrão dos agentes" },
 ];
 
 /** O comando digitado (":notas", "/ps", ":?"), ou `null` se o texto é uma mensagem. */
@@ -58,7 +59,7 @@ export const KEYS: { where: string; keys: [string, string][] }[] = [
       ["r", "rotinas"],
       ["p", "pausa ou retoma"],
       ["n · g", "novo agente · novo grupo"],
-      ["d · i", "painel · integrações"],
+      ["d · i · c", "painel · integrações · config"],
       ["?", "esta ajuda"],
       ["q", "sai (o motor continua)"],
     ],

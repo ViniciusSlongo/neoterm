@@ -24,7 +24,8 @@ Em qualquer lugar, `:ajuda` (na conversa) ou `?` (na lateral) mostra todos os co
   Um `•` depois do nome é mensagem nova.
 - **Grupos**, **rotinas de hoje** e **precisa de você**: o que só você resolve (uma rotina que
   falhou, um grupo esperando uma decisão, serviços esquecidos rodando).
-- **Painel** (`d`) e **integrações** (`i`) ficam embaixo, junto de criar agente (`n`) e grupo (`g`).
+- **Painel** (`d`), **integrações** (`i`) e **config** (`c`) ficam embaixo, junto de criar agente
+  (`n`) e grupo (`g`).
 
 ## A conversa
 
@@ -58,6 +59,9 @@ Em qualquer lugar, `:ajuda` (na conversa) ou `?` (na lateral) mostra todos os co
   rodando, com `x` para encerrar.
 - **Rotinas** (`:rotinas`, ou `r` na lateral): as rotinas da conversa, com a próxima execução e as
   últimas.
+- **Config** (`:config`, ou `c` na lateral): a cor de destaque da interface e o modelo padrão dos
+  agentes. Passe com `↑↓` pelas cores para ver a prévia na tela inteira; `enter` salva. Na
+  **personalizada**, digite qualquer cor `#RRGGBB`. Fica em `~/.neoterm/config.json`.
 
 ## Formulários
 

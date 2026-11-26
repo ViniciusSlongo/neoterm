@@ -447,6 +447,40 @@ describe("a interface", () => {
     assert.doesNotMatch(frame(), /> [n?]\s/);
   });
 
+  it(":config troca a cor de destaque com prévia, salva, e aceita uma cor personalizada", async () => {
+    await type(":config");
+    await press(KEY.enter);
+    await seen(/config .*config\.json/);
+    await seen("COR DE DESTAQUE");
+    await seen(/azul\s+#7CC4E8\s+✓ em uso/);
+    // ↓ só mostra a prévia; enter salva.
+    await press(KEY.down, KEY.down, KEY.down, KEY.down, KEY.down);
+    await press(KEY.enter);
+    await seen("cor salva: #F5A76C");
+    assert.equal((await t.api<{ accent?: string }>("/settings")).body.accent, "#F5A76C");
+    await seen(/laranja\s+#F5A76C\s+✓ em uso/);
+    // Personalizada: digita e aplica; inválida avisa.
+    for (let step = 0; step < 5; step++) await press(KEY.down);
+    await press(KEY.enter);
+    await type("12");
+    await press(KEY.enter);
+    await seen("use uma cor no formato #RRGGBB");
+    await type("3456");
+    await press(KEY.enter);
+    await seen("cor salva: #123456");
+    // Modelo padrão com ←→ (o de teste começa em haiku; ← vai para sonnet).
+    await press(KEY.down);
+    await press(KEY.left);
+    await seen("modelo padrão: sonnet");
+    assert.equal((await t.api<{ defaultModel: string }>("/settings")).body.defaultModel, "claude-sonnet-5-5");
+    await t.api("/settings", { method: "PATCH", body: { accent: null, defaultModel: "claude-haiku-5-5" } });
+    await press(KEY.escape);
+    for (let step = 0; step < 14; step++) ui.stdin.write(KEY.up);
+    await seen(/▌○ analista/);
+    await press(KEY.enter);
+    await seen("mensagem para analista");
+  });
+
   it("troca de agente com ↑↓ quando não há texto", async () => {
     await press(KEY.down);
     await seen(/dev\s+· Implementação/);

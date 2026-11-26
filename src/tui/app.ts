@@ -19,6 +19,8 @@ import { referenceFor } from "./files.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { parseCommand } from "./commands.ts";
 import { renderHelp } from "./help.ts";
+import { CONFIG_ROWS, CUSTOM_ROW, MODEL_OPTIONS, MODEL_ROW, renderConfig } from "./config.ts";
+import { ACCENTS, DEFAULT_ACCENT, isHexColor, setAccent } from "./theme.ts";
 import { type ProcessView, renderProcesses } from "./processes.ts";
 import { bytes } from "./format.ts";
 import { captureMouse } from "./mouse.ts";
@@ -36,6 +38,7 @@ type Item =
   | { kind: "attention"; id: string }
   | { kind: "dashboard" }
   | { kind: "integrations" }
+  | { kind: "config" }
   | { kind: "new-agent" }
   | { kind: "new-group" };
 
@@ -63,6 +66,7 @@ function itemsOf(state: NeotermState | null): Item[] {
     ...state.attention.map((item) => ({ kind: "attention", id: item.id }) as const),
     { kind: "dashboard" },
     { kind: "integrations" },
+    { kind: "config" },
     { kind: "new-agent" },
     { kind: "new-group" },
   ];
@@ -276,6 +280,7 @@ export function App({
   const columns = size.columns || 100;
   const rows = size.rows || 30;
   const [state, setState] = useState<NeotermState | null>(null);
+  const [settingsVersion, setSettingsVersion] = useState(0);
   const [connected, setConnected] = useState(true);
   const [selected, setSelected] = useState(0);
   const [focus, setFocus] = useState<"sidebar" | "main" | "notes" | "files">("main");
@@ -286,14 +291,15 @@ export function App({
   const [draft, setDraft] = useState<editor.Draft>(editor.EMPTY);
   // As imagens coladas no rascunho, pelo número que aparece no input: [imagem N].
   const images = useRef(new Map<number, string>());
-  // Quantas linhas acima do fim da conversa a vista está; 0 acompanha as mensagens novas.
-  const [scrollUp, setScrollUp] = useState(0);
+  // Onde a vista está: null acompanha o fim (as mensagens novas); um número é a linha do topo,
+  // contada de cima, quando você rolou para ler. Contar de cima faz o que chega embaixo (uma
+  // resposta, a troca da mensagem pendente pela gravada) não mexer no que você está lendo.
+  const [scrollTop, setScrollTop] = useState<number | null>(null);
   const viewportRef = useRef<DOMElement>(null);
   const contentRef = useRef<DOMElement>(null);
   const viewport = useBoxMetrics(viewportRef);
   const content = useBoxMetrics(contentRef);
   const maxScroll = Math.max(content.height - viewport.height, 0);
-  const lastContentHeight = useRef(0);
   const [form, setFormState] = useState<FormState | null>(null);
   // O formulário mais recente, mesmo antes de renderizar: teclas que chegam juntas (uma tecla
   // segurada, uma colagem) partem cada uma do resultado da anterior, e não se atropelam.
@@ -404,6 +410,8 @@ export function App({
           else setUnread((current) => new Set(current).add(key));
         }
         if (event.what === "routines") void loadRoutines();
+        // Outra janela do neoterm mudou a cor ou o modelo: lê de novo.
+        if (event.what === "settings") setSettingsVersion((value) => value + 1);
         refreshStateSoon();
         return;
       }
@@ -423,7 +431,7 @@ export function App({
   // Ao trocar de conversa: carrega e marca como lida.
   useEffect(() => {
     setMessages([]);
-    setScrollUp(0);
+    setScrollTop(null);
     if (!currentKey) return;
     setUnread((current) => {
       if (!current.has(currentKey)) return current;
@@ -458,18 +466,18 @@ export function App({
     return () => clearInterval(timer);
   }, [anyLive]);
 
-  // Lendo mais acima, a vista fica onde está quando chega conteúdo novo embaixo.
-  useEffect(() => {
-    const grew = content.height - lastContentHeight.current;
-    lastContentHeight.current = content.height;
-    if (grew > 0) setScrollUp((value) => (value > 0 ? value + grew : 0));
-  }, [content.height]);
-  const scrollBy = (lines: number) => setScrollUp((value) => Math.min(Math.max(value + lines, 0), maxScroll));
+  /** Rola `lines` para cima (negativo desce); chegando ao fim, volta a acompanhar as novas. */
+  const scrollBy = (lines: number) =>
+    setScrollTop((value) => {
+      const top = Math.min(Math.max((value ?? maxScroll) - lines, 0), maxScroll);
+      return top >= maxScroll ? null : top;
+    });
 
   // ---------- páginas: painel e integrações ----------
   const isDashboard = item?.kind === "dashboard";
   const isIntegrations = item?.kind === "integrations";
-  const isPage = isDashboard || isIntegrations;
+  const isConfig = item?.kind === "config";
+  const isPage = isDashboard || isIntegrations || isConfig;
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   // As páginas rolam de cima para baixo: quantas linhas do topo já passaram.
@@ -521,6 +529,75 @@ export function App({
   useEffect(() => {
     if (isIntegrations) loadIntegrations();
   }, [isIntegrations, loadIntegrations]);
+
+  // ---------- configuração: cor e modelo padrão ----------
+  const [savedAccent, setSavedAccent] = useState(DEFAULT_ACCENT);
+  const [defaultModel, setDefaultModel] = useState("claude-opus-5-5");
+  const [configIndex, setConfigIndex] = useState(0);
+  const [customHex, setCustomHex] = useState<string | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+  // A cor desenhada: na tela de config, a que está sob o cursor (prévia); fora dela, a salva.
+  const hovered =
+    isConfig && configIndex < ACCENTS.length
+      ? ACCENTS[configIndex]!.hex
+      : isConfig && configIndex === CUSTOM_ROW && customHex && isHexColor(customHex)
+        ? customHex
+        : savedAccent;
+  setAccent(hovered);
+  const loadSettings = useCallback(() => {
+    api.settings().then(
+      (settings) => {
+        setSavedAccent(settings.accent ?? DEFAULT_ACCENT);
+        setDefaultModel(settings.defaultModel);
+      },
+      () => {},
+    );
+  }, [api]);
+  useEffect(() => loadSettings(), [loadSettings, settingsVersion]);
+  useEffect(() => {
+    if (!isConfig) return;
+    setCustomHex(null);
+    setConfigError(null);
+    const at = ACCENTS.findIndex((accent) => accent.hex.toUpperCase() === savedAccent.toUpperCase());
+    setConfigIndex(at >= 0 ? at : CUSTOM_ROW);
+  }, [isConfig]);
+  const saveConfig = (patch: { accent?: string; defaultModel?: string }) =>
+    api.saveSettings(patch).then(
+      (settings) => {
+        setSavedAccent(settings.accent ?? DEFAULT_ACCENT);
+        setDefaultModel(settings.defaultModel);
+        setConfigError(null);
+        say(patch.accent ? `cor salva: ${patch.accent}` : `modelo padrão: ${settings.defaultModel.replace(/^claude-|-\d.*$/g, "")}`);
+      },
+      (error: Error) => setConfigError(error.message),
+    );
+
+  const handleConfig = (input: string, key: InkKey) => {
+    if (customHex !== null) {
+      if (key.escape) return setCustomHex(null);
+      if (key.return) {
+        const hex = customHex.startsWith("#") ? customHex : `#${customHex}`;
+        if (!isHexColor(hex)) return setConfigError("use uma cor no formato #RRGGBB, como #F5A76C");
+        setCustomHex(null);
+        return void saveConfig({ accent: hex.toUpperCase() });
+      }
+      if (key.backspace || key.delete) return setCustomHex((value) => (value ? value.slice(0, -1) : value));
+      if (/^[#0-9a-fA-F]+$/.test(input)) return setCustomHex((value) => `${value ?? ""}${input}`.slice(0, 7));
+      return;
+    }
+    if (key.escape || key.tab) return setFocus("sidebar");
+    if (key.upArrow || input === "k") return setConfigIndex((value) => Math.max(value - 1, 0));
+    if (key.downArrow || input === "j") return setConfigIndex((value) => Math.min(value + 1, CONFIG_ROWS - 1));
+    if (configIndex === MODEL_ROW && (key.leftArrow || key.rightArrow)) {
+      const at = Math.max(MODEL_OPTIONS.findIndex((option) => option.value === defaultModel), 0);
+      const next = MODEL_OPTIONS[(at + (key.rightArrow ? 1 : -1) + MODEL_OPTIONS.length) % MODEL_OPTIONS.length]!;
+      return void saveConfig({ defaultModel: next.value });
+    }
+    if (key.return || input === " ") {
+      if (configIndex < ACCENTS.length) return void saveConfig({ accent: ACCENTS[configIndex]!.hex });
+      if (configIndex === CUSTOM_ROW) return setCustomHex("#");
+    }
+  };
 
   // A roda do mouse rola a conversa, de onde estiver o foco.
   const { stdin } = useStdin();
@@ -768,6 +845,8 @@ export function App({
         return openDashboard();
       case "mcp":
         return openIntegrations();
+      case "config":
+        return openConfig();
       case "editar":
         return openEditForm(scope);
       case "path":
@@ -786,7 +865,7 @@ export function App({
     }
     const key = scopeKey(scope);
     setPending((current) => ({ ...current, [key]: [...(current[key] ?? []), text] }));
-    setScrollUp(0);
+    setScrollTop(null);
     void api.send(scope, text).catch((error: Error) => {
       say(error.message);
       setPending((current) => ({ ...current, [key]: (current[key] ?? []).filter((entry) => entry !== text) }));
@@ -873,7 +952,7 @@ export function App({
     );
   };
 
-  const openPage = (kind: "dashboard" | "integrations") => {
+  const openPage = (kind: "dashboard" | "integrations" | "config") => {
     const at = items.findIndex((candidate) => candidate.kind === kind);
     if (at < 0) return;
     setSelected(at);
@@ -881,6 +960,7 @@ export function App({
     setFocus("main");
   };
   const openDashboard = () => openPage("dashboard");
+  const openConfig = () => openPage("config");
   const openIntegrations = () => openPage("integrations");
 
   const activate = () => {
@@ -903,6 +983,7 @@ export function App({
     if (input === "d") return openDashboard();
     if (input === "?") return openHelp();
     if (input === "i") return openIntegrations();
+    if (input === "c") return openConfig();
     if (input === "e" && (item?.kind === "agent" || item?.kind === "group")) return openEditForm({ kind: item.kind, slug: item.slug });
     if (input === "p" && item?.kind === "agent") {
       const paused = state?.agents.find((agent) => agent.slug === item.slug)?.state === "paused";
@@ -1132,6 +1213,7 @@ export function App({
     if (mode === "routines") return handleRoutines(input, key);
     if (mode === "processes") return handleProcesses(input, key);
     if (mode === "attention") return handleAttention(input, key);
+    if (isConfig) return handleConfig(input, key);
     if (isPage) {
       if (input === "j" || key.pageDown) return scrollPage(key.pageDown ? Math.max(viewport.height - 2, 1) : 1);
       if (input === "k" || key.pageUp) return scrollPage(key.pageUp ? -Math.max(viewport.height - 2, 1) : -1);
@@ -1313,6 +1395,8 @@ export function App({
     sidebar.push(row("dashboard", dashboardAt === index, [h(Text, { color: theme.accent }, "◆"), " painel"], "◆ painel", "d", theme.accent));
     const integrationsAt = items.findIndex((candidate) => candidate.kind === "integrations");
     sidebar.push(row("integrations", integrationsAt === index, [h(Text, { color: theme.accent }, "◆"), " integrações"], "◆ integrações", "i", theme.accent));
+    const configAt = items.findIndex((candidate) => candidate.kind === "config");
+    sidebar.push(row("config", configAt === index, [h(Text, { color: theme.accent }, "◆"), " config"], "◆ config", "c", theme.accent));
     const newAgentAt = items.findIndex((candidate) => candidate.kind === "new-agent");
     const newGroupAt = items.findIndex((candidate) => candidate.kind === "new-group");
     sidebar.push(row("new-agent", newAgentAt === index, [h(Text, { color: theme.accent }, "+"), " novo agente"], "+ novo agente", "n", theme.accent));
@@ -1331,6 +1415,8 @@ export function App({
     headerRight = h(Text, { color: theme.muted }, "esc volta");
   } else if (mode === "form" && form) {
     headerLeft = h(Text, null, h(Text, { bold: true }, form.title), form.subtitle ? h(Text, { color: theme.muted }, ` · ${form.subtitle}`) : null);
+  } else if (isConfig) {
+    headerLeft = h(Text, null, title("config"), h(Text, { color: theme.muted }, " · salvo em ~/.neoterm/config.json"));
   } else if (isIntegrations) {
     headerLeft = h(Text, null, title("integrações"), h(Text, { color: theme.muted }, " · MCP, pelo Claude Code"));
     headerRight = h(
@@ -1416,7 +1502,9 @@ export function App({
       h(Box, { ref: contentRef, flexDirection: "column", flexShrink: 0 }, renderHelp(mainWidth - 3)),
     );
   } else if (isPage) {
-    const content = isIntegrations
+    const content = isConfig
+      ? renderConfig({ index: configIndex, saved: savedAccent, typing: customHex, model: defaultModel, focused: focus === "main", error: configError })
+      : isIntegrations
       ? renderIntegrations(integrations, { loading: integrationsLoading, error: integrationsError })
       : dashboard
         ? renderDashboard(dashboard, { width: mainWidth - 3, timeZone })
@@ -1520,10 +1608,10 @@ export function App({
       shown.length === 0 && waiting.length === 0 && !current
         ? h(Text, { key: "empty", color: theme.muted }, inGroup ? "Conversa vazia. Escreva para o grupo; @nome chama um agente." : `Conversa vazia. Escreva para ${scope.slug}.`)
         : null;
-    // A conversa inteira numa caixa da altura dela; a vista mostra a janela pedida por scrollUp.
+    // A conversa inteira numa caixa da altura dela; a vista mostra a janela pedida por scrollTop.
     // Enquanto cabe, fica encostada embaixo; quando passa, rola por linhas com contentOffsetY.
     const overflowing = content.hasMeasured && viewport.hasMeasured && content.height > viewport.height;
-    const offset = overflowing ? maxScroll - Math.min(scrollUp, maxScroll) : 0;
+    const offset = overflowing ? Math.min(scrollTop ?? maxScroll, maxScroll) : 0;
     body = h(
       Box,
       {
@@ -1582,6 +1670,7 @@ export function App({
   } else if (mode === "help") hints = "↑↓ ou roda do mouse rolam · esc volta";
   else if (focus === "notes") hints = "salva sozinho · tab conversa · esc fecha";
   else if (focus === "sidebar") hints = "↑↓ enter abre · e edita · n agente · g grupo · ? ajuda";
+  else if (isConfig) hints = customHex !== null ? "digite #RRGGBB · enter aplica · esc desiste" : "↑↓ prévia da cor · enter salva · ←→ modelo · esc lateral";
   else if (isIntegrations) hints = "r verifica de novo · j/k rolam · esc lateral";
   else if (isDashboard) hints = "j/k rolam · esc lateral";
   else if (mode === "processes") hints = confirmStop ? `${confirmStop === "all" ? "X" : "x"} de novo encerra · qualquer outra tecla desiste` : "↑↓ escolhe · x encerra · X encerra todos · enter detalhe · esc volta";

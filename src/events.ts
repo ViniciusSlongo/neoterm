@@ -18,7 +18,7 @@ export type TurnEvent =
   | { type: "done"; messageId: string; durationMs: number }
   | { type: "error"; message: string };
 
-export type ChangeKind = "agents" | "groups" | "routines" | "attention" | "messages";
+export type ChangeKind = "agents" | "groups" | "routines" | "attention" | "messages" | "settings";
 
 export type NeotermEvent =
   | { type: "turn"; scope: Scope; agent: string; event: TurnEvent }

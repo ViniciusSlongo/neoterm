@@ -24,3 +24,17 @@ describe("comandos da conversa", () => {
     assert.equal(new Set(words).size, words.length);
   });
 });
+
+describe("cor de destaque", async () => {
+  const { setAccent, theme, DEFAULT_ACCENT } = await import("../src/tui/theme.ts");
+  it("troca o destaque e o fundo das suas mensagens; inválida volta ao azul", () => {
+    setAccent("#f5a76c");
+    assert.equal(theme.accent, "#F5A76C");
+    assert.match(theme.person, /^#[0-9A-F]{6}$/);
+    assert.notEqual(theme.person, "#1A2430");
+    setAccent("vermelho");
+    assert.equal(theme.accent, DEFAULT_ACCENT);
+    setAccent(undefined);
+    assert.equal(theme.accent, DEFAULT_ACCENT);
+  });
+});
