@@ -92,4 +92,4 @@ Sem build: o Node 24 roda o TypeScript direto. Veja [Desenvolvimento](docs/10-de
 
 ---
 
-Inspirado no [OpenBot](https://github.com/CopilotKit/OpenBot).
+[MIT](LICENSE) · Inspirado no [OpenBot](https://github.com/CopilotKit/OpenBot).

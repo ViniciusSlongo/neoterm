@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Agentes persistentes com identidade, rotinas e grupos, no terminal, usando o Claude Code do seu plano.",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "bin": {
     "neoterm": "./bin/neoterm.js"
