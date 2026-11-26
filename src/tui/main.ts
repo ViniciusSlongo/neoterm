@@ -6,25 +6,18 @@ import { App } from "./app.ts";
 // Tela alternativa: a interface ocupa o terminal e, ao sair, ele volta como estava. Sem quebra
 // automática de linha: se o terminal medir um caractere mais largo do que o ink mediu (alguns
 // emoji), a linha é cortada na borda em vez de descer, e a tela não sobe levando o cabeçalho.
-const ALT_SCREEN_ON = "\x1b[?1049h\x1b[H\x1b[?7l";
-const ALT_SCREEN_OFF = "\x1b[?7h\x1b[?1049l";
-// Eventos de mouse (formato SGR): sem isso, o terminal transforma a roda em ↑↓, que trocam de
-// conversa. Com isso, a roda rola só a conversa, mas o terminal não seleciona texto: para isso há
-// o modo seleção (ctrl+s), que desliga a captura enquanto dura.
-const MOUSE_ON = "\x1b[?1000h\x1b[?1006h";
-const MOUSE_OFF = "\x1b[?1006l\x1b[?1000l";
+// O mouse fica com o terminal: arrastar seleciona, cmd+c e cmd+v como sempre. Na tela alternativa a
+// roda chega como ↑↓ (o ?1007 pede isso a quem não faz por padrão), e ↑↓ rolam a conversa.
+const ALT_SCREEN_ON = "\x1b[?1049h\x1b[H\x1b[?7l\x1b[?1007h";
+const ALT_SCREEN_OFF = "\x1b[?1007l\x1b[?7h\x1b[?1049l";
 
 /** Abre a interface em tela cheia e devolve o terminal como estava ao sair. */
 export async function runTui(): Promise<void> {
-  const mouse = process.env.NEOTERM_MOUSE !== "0";
-  process.stdout.write(ALT_SCREEN_ON + (mouse ? MOUSE_ON : ""));
-  const restore = () => process.stdout.write((mouse ? MOUSE_OFF : "") + ALT_SCREEN_OFF);
+  process.stdout.write(ALT_SCREEN_ON);
+  const restore = () => process.stdout.write(ALT_SCREEN_OFF);
   process.once("exit", restore);
   // O protocolo de teclado kitty, onde o terminal tiver, separa o shift+enter do enter.
-  const setMouse = (on: boolean) => {
-    if (mouse) process.stdout.write(on ? MOUSE_ON : MOUSE_OFF);
-  };
-  const instance = render(h(App, { api: httpApi(), setMouse }), { exitOnCtrlC: true, kittyKeyboard: { mode: "auto" } });
+  const instance = render(h(App, { api: httpApi() }), { exitOnCtrlC: true, kittyKeyboard: { mode: "auto" } });
   try {
     await instance.waitUntilExit();
   } finally {

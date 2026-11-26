@@ -7,7 +7,7 @@ import { NEOTERM_HOME } from "../config.ts";
 
 /*
  * Imagens coladas na conversa. Chegam de dois jeitos: a imagem em si no clipboard (um print), que o
- * terminal não repassa e a interface lê no ctrl+v; ou o caminho de um arquivo, colado ou arrastado
+ * cmd+v manda como colagem vazia e a interface lê; ou o caminho de um arquivo, colado ou arrastado
  * (às vezes entre aspas, ou com espaços escapados por \). O input mostra só `[imagem N]`; no envio o
  * token vira `[imagem N: /caminho]`, que diz ao agente o que abrir, e o histórico volta a mostrar
  * `[imagem N]`.

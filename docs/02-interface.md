@@ -19,11 +19,8 @@
 | --- | --- |
 | Enviar | `enter` |
 | Nova linha | `shift+enter` |
-| Colar imagem | `ctrl+v`, ou cole o caminho do arquivo |
 | Inserir caminho de arquivo | `:path` (no fim da frase, insere ali) |
-| Rolar | roda do mouse, `pgup`/`pgdn` |
-| Selecionar texto | `ctrl+s`, arraste, `cmd+c`, `esc` |
-| Copiar a última resposta | `ctrl+y` |
+| Rolar | roda do mouse, `↑↓`, `pgup`/`pgdn` |
 | Chamar agente (grupo) | `@nome` |
 
 Mensagens enviadas enquanto o agente responde vão para a fila e são respondidas em ordem.

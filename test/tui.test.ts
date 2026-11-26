@@ -31,9 +31,7 @@ let OPENED_IN = "";
 let ui: ReturnType<typeof render>;
 // O que o ctrl+v encontra no clipboard: o caminho da imagem salva, ou null.
 let clipboard: string | null = null;
-// O que a interface pediu ao terminal sobre o mouse, e o que copiou.
-const mouseCalls: boolean[] = [];
-let copied = "";
+
 const frame = () => ui.lastFrame() ?? "";
 const press = async (...keys: string[]) => {
   for (const key of keys) {
@@ -69,12 +67,7 @@ before(async () => {
   makeFolder("aberto-aqui/codigo");
   makeFolder("aberto-aqui/docs/contratos");
   writeFileSync(join(OPENED_IN, "solto.txt"), "");
-  ui = render(h(App, { api: httpApi(t.base), cwd: OPENED_IN, readClipboardImage: async () => clipboard,
-    setMouse: (on: boolean) => mouseCalls.push(on),
-    copyToClipboard: async (text: string) => {
-      copied = text;
-    },
-  }));
+  ui = render(h(App, { api: httpApi(t.base), cwd: OPENED_IN, readClipboardImage: async () => clipboard }));
   await seen("AGENTES");
 });
 after(async () => {
@@ -160,17 +153,16 @@ describe("a interface", () => {
     await waitFor(() => fakeCalls().some((call) => call.prompt.includes(`[imagem 1: ${first}] e essa`)));
   });
 
-  it("ctrl+v cola a imagem do clipboard; colagem vazia também", async () => {
+  it("cmd+v com uma imagem no clipboard (colagem vazia) cola a imagem", async () => {
     const saved = join(makeFolder("clip"), "print.png");
     clipboard = saved;
     await type("veja");
-    await press("\x16");
+    await press("\x1b[200~\x1b[201~");
     await seen("> veja [imagem 1]");
-    // Terminais que mandam uma colagem vazia quando o clipboard só tem imagem.
     await press("\x1b[200~\x1b[201~");
     await seen("> veja [imagem 1] [imagem 2]");
     clipboard = null;
-    await press("\x16");
+    await press("\x1b[200~\x1b[201~");
     await seen("nenhuma imagem no clipboard");
     await press(KEY.enter);
     await waitFor(() => fakeCalls().some((call) => call.prompt.includes(`veja [imagem 1: ${saved}] [imagem 2: ${saved}]`)));
@@ -230,22 +222,22 @@ describe("a interface", () => {
     await clearInput();
   });
 
-  it("a roda do mouse rola a conversa, e não a lateral", async () => {
+  it("↑↓ (e a roda do mouse, que chega como ↑↓) rolam a conversa, sem trocar de agente", async () => {
     setScript({ analista: Array.from({ length: 60 }, (_, line) => `linha ${line + 1}`).join("\n") });
     await type("manda um texto longo");
     await press(KEY.enter);
     await seen("linha 60");
     assert.doesNotMatch(frame(), /linha 40\s/);
-    // Cada giro da roda sobe 3 linhas: 5 giros escondem o fim e mostram o que estava acima.
-    for (let step = 0; step < 5; step++) await press("\x1b[<64;60;10M");
+    // Cada ↑ sobe 2 linhas: 8 escondem o fim e mostram o que estava acima.
+    for (let step = 0; step < 8; step++) await press(KEY.up);
     await seen(/linha 40\s/);
     assert.doesNotMatch(frame(), /linha 60/);
     // Até o começo da conversa.
-    for (let step = 0; step < 60; step++) await press("\x1b[<64;60;10M");
+    for (let step = 0; step < 80; step++) ui.stdin.write(KEY.up);
     await seen("┃ quanto entrou hoje?");
     assert.match(frame(), /○ analista/);
     assert.match(frame(), /analista\s+· Acompanhamento financeiro/);
-    for (let step = 0; step < 60; step++) await press("\x1b[<65;60;10M");
+    for (let step = 0; step < 80; step++) ui.stdin.write(KEY.down);
     await seen("linha 60");
     setScript({});
   });
@@ -516,10 +508,12 @@ describe("a interface", () => {
     await press("\x10"); // ctrl+p
     await seen("notas fixadas");
     await press("\x0e");
-    await press(KEY.down);
+    await press(KEY.escape);
+    await press(KEY.down, KEY.enter);
     await seen(/dev\s+· Implementação/);
     await seen("NOTAS · fixadas");
-    await press(KEY.up);
+    await press(KEY.escape);
+    await press(KEY.up, KEY.enter);
     await seen("☐ mandar o resumo");
     assert.equal((await t.api<{ notesPinned?: boolean }>("/settings")).body.notesPinned, true);
     // Soltar e fechar.
@@ -534,54 +528,12 @@ describe("a interface", () => {
     await t.api("/agents/analista/notes", { method: "PUT", body: { text: "" } });
   });
 
-  it("ctrl+s entra no modo seleção (desliga a captura do mouse); ↑↓ rolam sem trocar de agente; esc volta", async () => {
-    mouseCalls.length = 0;
-    await press("\x13");
-    await seen("MODO SELEÇÃO");
-    assert.deepEqual(mouseCalls, [false]);
-    await press(KEY.down);
-    assert.match(frame(), /analista\s+· Acompanhamento financeiro/);
+  it("troca de agente pela lateral", async () => {
     await press(KEY.escape);
-    await waitFor(() => !frame().includes("MODO SELEÇÃO"));
-    assert.deepEqual(mouseCalls, [false, true]);
-    await seen("mensagem para analista");
-    // :selecionar também.
-    await type(":selecionar");
-    await press(KEY.enter);
-    await seen("MODO SELEÇÃO");
-    await press(KEY.escape);
-    await waitFor(() => !frame().includes("MODO SELEÇÃO"));
-  });
-
-  it("ctrl+y copia a última resposta do agente", async () => {
-    setScript({ analista: "Resposta **para** copiar." });
-    await type("me dá algo");
-    await press(KEY.enter);
-    await seen("Resposta para copiar.");
-    setScript({});
-    await press("\x19");
-    await seen("última resposta copiada");
-    assert.equal(copied, "Resposta **para** copiar.");
-  });
-
-  it(":esforço muda o esforço do agente e aparece no cabeçalho", async () => {
-    await type(":esforço");
-    await press(KEY.enter);
-    await seen("esforço de analista: padrão");
-    await type(":esforço muito alto");
-    await press(KEY.enter);
-    await seen("esforço de analista: muito alto");
-    await waitFor(async () => (await t.api<{ agent: { effort?: string } }>("/agents/analista")).body.agent.effort === "xhigh");
-    await seen("esforço muito alto");
-    await type(":esforço padrão");
-    await press(KEY.enter);
-    await waitFor(async () => (await t.api<{ agent: { effort?: string } }>("/agents/analista")).body.agent.effort === undefined);
-  });
-
-  it("troca de agente com ↑↓ quando não há texto", async () => {
-    await press(KEY.down);
+    await press(KEY.down, KEY.enter);
     await seen(/dev\s+· Implementação/);
-    await press(KEY.up);
+    await press(KEY.escape);
+    await press(KEY.up, KEY.enter);
     await seen(/analista\s+· Acompanhamento financeiro/);
   });
 

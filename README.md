@@ -36,7 +36,7 @@ neoterm
 | Funcionalidade | Como usar |
 | --- | --- |
 | Agentes com função e pastas | `n` cria, `e` edita |
-| Conversa com imagens e markdown | escreva; `ctrl+v` cola imagem |
+| Conversa com imagens e markdown | escreva; cole imagens com cmd+v |
 | Rotinas | "todo dia às 9h, …" na conversa, ou `r` |
 | Grupos | `g` cria; `@nome` chama um agente |
 | Consulta entre agentes | "pergunta ao dev …" na conversa |
@@ -46,7 +46,6 @@ neoterm
 | Painel | `d` |
 | Integrações (MCP) | `i` |
 | Cor e modelo padrão | `c` |
-| Selecionar e copiar | `ctrl+s`; `ctrl+y` copia a última resposta |
 | Tudo pelo terminal | `neoterm ask analista "…"` |
 
 ## Documentação

@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { Box, type DOMElement, Text, useApp, useBoxMetrics, useInput, usePaste, useStdin, useWindowSize } from "ink";
+import { Box, type DOMElement, Text, useApp, useBoxMetrics, useInput, usePaste, useWindowSize } from "ink";
 import { createElement as h, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MessagePart } from "../db/schema.ts";
 import type { NeotermEvent } from "../events.ts";
@@ -24,8 +24,6 @@ import { CONFIG_ROWS, CUSTOM_ROW, MODEL_OPTIONS, MODEL_ROW, renderConfig } from 
 import { ACCENTS, DEFAULT_ACCENT, isHexColor, setAccent } from "./theme.ts";
 import { type ProcessView, renderProcesses } from "./processes.ts";
 import { bytes } from "./format.ts";
-import { captureMouse } from "./mouse.ts";
-import { copyText } from "./clipboard.ts";
 import { editKey, followCursor, isNewlineKey, renderLines } from "./textarea.ts";
 import { SPINNER, theme } from "./theme.ts";
 
@@ -55,8 +53,8 @@ type InkKey = Parameters<Parameters<typeof useInput>[0]>[1];
 const SIDEBAR_WIDTH = 30;
 /** Quantas linhas o input mostra antes de rolar junto com o cursor. */
 const INPUT_MAX_LINES = 8;
-/** Linhas que a roda do mouse rola por evento. */
-const WHEEL_LINES = 3;
+/** Linhas por ↑↓ (a roda do mouse chega como ↑↓). */
+const SCROLL_LINES = 2;
 
 const scopeKey = (scope: { kind: string; slug: string }) => `${scope.kind}:${scope.slug}`;
 
@@ -266,21 +264,16 @@ function useDebounced(callback: () => void, ms: number): () => void {
 
 /**
  * `cwd`: de onde a interface foi aberta; um caminho relativo digitado num formulário parte dela.
- * `readClipboardImage`: lê a imagem do clipboard no ctrl+v (trocável nos testes).
+ * `readClipboardImage`: lê a imagem do clipboard numa colagem vazia (trocável nos testes).
  */
 export function App({
   api,
   cwd = process.cwd(),
   readClipboardImage = clipboardImage,
-  setMouse = () => {},
-  copyToClipboard = copyText,
 }: {
   api: NeotermApi;
   cwd?: string;
   readClipboardImage?: () => Promise<string | null>;
-  /** Liga ou desliga a captura do mouse no terminal (o modo seleção desliga). */
-  setMouse?: (on: boolean) => void;
-  copyToClipboard?: (text: string) => Promise<void>;
 }): ReactNode {
   const { exit } = useApp();
   const size = useWindowSize();
@@ -609,14 +602,6 @@ export function App({
     }
   };
 
-  // A roda do mouse rola a conversa, de onde estiver o foco.
-  const { stdin } = useStdin();
-  const onWheel = useRef((_direction: 1 | -1) => {});
-  onWheel.current = (direction) => {
-    if (isPage || mode === "help") return scrollPage(-direction * WHEEL_LINES);
-    if (mode === "chat") scrollBy(direction * WHEEL_LINES);
-  };
-  useEffect(() => captureMouse(stdin, (direction) => onWheel.current(direction)), [stdin]);
 
   const scopedRoutines = useMemo(
     () =>
@@ -760,36 +745,6 @@ export function App({
     if (input === "X" && list.some((entry) => entry.kind === "service")) return setConfirmStop("all");
   };
 
-  // ---------- modo seleção e copiar ----------
-  // Com a captura do mouse ligada, o terminal não seleciona texto. O modo seleção desliga a captura;
-  // ↑↓ e pgup/pgdn rolam (muitos terminais mandam a roda como ↑↓ nesse modo); esc volta.
-  const [selecting, setSelecting] = useState(false);
-  const startSelecting = () => {
-    setSelecting(true);
-    setMouse(false);
-  };
-  const stopSelecting = () => {
-    setSelecting(false);
-    setMouse(true);
-  };
-  useEffect(() => () => setMouse(true), [setMouse]);
-  const handleSelecting = (input: string, key: InkKey) => {
-    if (key.escape || key.return || (key.ctrl && input === "s") || input === "q") return stopSelecting();
-    const step = key.pageUp || key.pageDown ? Math.max(viewport.height - 2, 1) : WHEEL_LINES;
-    const direction = key.upArrow || key.pageUp ? 1 : key.downArrow || key.pageDown ? -1 : 0;
-    if (!direction) return;
-    if (isPage || mode === "help") return scrollPage(-direction * step);
-    if (mode === "chat") scrollBy(direction * step);
-  };
-  const copyLastReply = () => {
-    const last = messages.findLast((message) => message.author === "agent" && message.text.trim());
-    if (!last) return say("nada para copiar ainda");
-    copyToClipboard(last.text).then(
-      () => say(`última resposta copiada (${[...last.text].length} caracteres)`),
-      (error: Error) => say(`não copiei: ${error.message}`),
-    );
-  };
-
   // ---------- ajuda ----------
   const helpReturn = useRef<{ mode: Mode; focus: typeof focus }>({ mode: "chat", focus: "main" });
   const openHelp = () => {
@@ -847,7 +802,7 @@ export function App({
     });
   };
 
-  /** A imagem do clipboard: o terminal não a repassa, então a interface vai buscar. */
+  /** Cmd+v com uma imagem no clipboard chega como colagem vazia: a interface vai buscar a imagem. */
   const pasteClipboardImage = () =>
     void readClipboardImage().then(
       (path) => (path ? attach([path]) : say("nenhuma imagem no clipboard")),
@@ -902,10 +857,6 @@ export function App({
         return openIntegrations();
       case "config":
         return openConfig();
-      case "selecionar":
-        return startSelecting();
-      case "copiar":
-        return copyLastReply();
       case "editar":
         return openEditForm(scope);
       case "path":
@@ -1098,11 +1049,10 @@ export function App({
     if (isNewlineKey(input, key)) return edit((current) => editor.insert(current, "\n"));
     if (key.return) return send();
     // ↑↓ sem texto trocam de conversa; com texto, andam pelas linhas.
-    if (key.upArrow && !draft.text) return move(-1);
-    if (key.downArrow && !draft.text) return move(1);
+    // ↑↓ rolam a conversa (a roda do mouse chega como ↑↓); num texto de várias linhas, andam nele.
+    if ((key.upArrow || key.downArrow) && !draft.text.includes("\n")) return scrollBy(key.upArrow ? SCROLL_LINES : -SCROLL_LINES);
     if (key.pageUp) return scrollBy(Math.max(viewport.height - 2, 1));
     if (key.pageDown) return scrollBy(-Math.max(viewport.height - 2, 1));
-    if (key.ctrl && input === "v") return pasteClipboardImage();
     if (key.ctrl && input === "r") return openRoutines();
     if (key.ctrl && input === "n") return toggleNotes();
     // Sem bracketed paste, a colagem chega aqui como um bloco de vários caracteres.
@@ -1296,11 +1246,6 @@ export function App({
   });
 
   useInput((input, key) => {
-    if (selecting) return handleSelecting(input, key);
-    // ctrl+s: modo seleção (fora de formulários e notas, onde ctrl+s salva).
-    if (key.ctrl && input === "s" && mode !== "form" && focus !== "notes") return startSelecting();
-    // ctrl+y: copia a última resposta da conversa.
-    if (key.ctrl && input === "y" && mode === "chat") return copyLastReply();
     if (mode === "form") return handleForm(input, key);
     if (mode === "help") {
       if (key.escape || key.return || input === "q" || input === "?") return closeHelp();
@@ -1316,6 +1261,7 @@ export function App({
     if (mode === "attention") return handleAttention(input, key);
     if (isConfig) return handleConfig(input, key);
     if (isPage) {
+      if (key.upArrow || key.downArrow) return scrollPage(key.downArrow ? SCROLL_LINES : -SCROLL_LINES);
       if (input === "j" || key.pageDown) return scrollPage(key.pageDown ? Math.max(viewport.height - 2, 1) : 1);
       if (input === "k" || key.pageUp) return scrollPage(key.pageUp ? -Math.max(viewport.height - 2, 1) : -1);
       if (isIntegrations && input === "r") return loadIntegrations(true);
@@ -1803,9 +1749,7 @@ export function App({
   // ---------- rodapé ----------
   let hints: string;
   const removeHint = form?.remove ? " · ctrl+d exclui" : "";
-  if (selecting) {
-    hints = "MODO SELEÇÃO · arraste para selecionar, cmd+c copia · ↑↓ rolam · esc volta";
-  } else if (mode === "form" && form?.confirmingRemove) {
+  if (mode === "form" && form?.confirmingRemove) {
     hints = "ctrl+d de novo exclui · qualquer outra tecla desiste";
   } else if (mode === "form" && choosingFolders) {
     hints = "↑↓ anda · espaço escolhe · → entra · ← sobe · esc fecha a lista · tab próximo · ctrl+s salva";
@@ -1825,7 +1769,7 @@ export function App({
   else if (mode === "processes") hints = confirmStop ? `${confirmStop === "all" ? "X" : "x"} de novo encerra · qualquer outra tecla desiste` : "↑↓ escolhe · x encerra · X encerra todos · enter detalhe · esc volta";
   else if (mode === "routines") hints = "↑↓ escolhe · n nova · espaço liga/desliga · x roda agora · d apaga · esc volta";
   else if (mode === "attention") hints = "esc volta para a lateral";
-  else hints = `enter envia · ctrl+n notas · ctrl+s selecionar · esc lateral · :ajuda`;
+  else hints = `enter envia · ctrl+n notas · esc lateral · :ajuda`;
   const usage = state?.planUsage;
   const plan = usage
     ? ` · plano${usage.fiveHour ? ` ${Math.round(usage.fiveHour.utilization * 100)}%` : ""}${usage.sevenDay ? ` · semana ${Math.round(usage.sevenDay.utilization * 100)}%` : ""}`
@@ -1887,9 +1831,7 @@ export function App({
       h(
         Box,
         { flexShrink: 1, overflow: "hidden" },
-        selecting && !flash
-          ? h(Text, { wrap: "truncate-end", backgroundColor: theme.amber, color: theme.onAccent, bold: true }, ` ${hints} `)
-          : h(Text, { color: flash ? theme.accent : theme.muted, wrap: "truncate-end" }, flash ?? hints),
+        h(Text, { color: flash ? theme.accent : theme.muted, wrap: "truncate-end" }, flash ?? hints),
       ),
       h(Box, { flexShrink: 0, marginLeft: 2 }, status),
     ),

@@ -20,8 +20,6 @@ Na conversa, com `:` ou `/` na frente.
 | `:painel` | `:dash` | painel |
 | `:mcp` | `:integracoes` | integrações |
 | `:config` | `:cor`, `:tema` | cor e modelo padrão |
-| `:selecionar` | `:sel` | modo seleção |
-| `:copiar` | `:copy` | copia a última resposta |
 
 ## Conversa
 
@@ -30,12 +28,8 @@ Na conversa, com `:` ou `/` na frente.
 | `enter` | envia |
 | `shift+enter` | nova linha (ou `option+enter`, `ctrl+j`) |
 | `ctrl+n` | notas |
-| `ctrl+s` | modo seleção |
-| `ctrl+y` | copia a última resposta |
-| `ctrl+v` | cola imagem |
 | `ctrl+r` | rotinas |
-| `cmd+backspace` | apaga a palavra |
-| `↑↓` sem texto | troca de conversa |
+| `↑↓`, `pgup`/`pgdn` | rolam a conversa |
 | `esc` | vai para a lateral |
 
 ## Lateral
