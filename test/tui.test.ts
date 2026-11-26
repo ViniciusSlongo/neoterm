@@ -660,6 +660,23 @@ describe("a interface", () => {
     await waitFor(async () => (await t.api<{ agent: { effort?: string } }>("/agents/analista")).body.agent.effort === undefined);
   });
 
+  it("o rodapé mostra quando a janela do plano renova; depois que renovou, não mostra o número velho", async () => {
+    const { clockOrDay } = await import("../src/tui/format.ts");
+    setScript({ analista: "!plano 0.92 53\nok" });
+    await type("como está o plano?");
+    await press(KEY.enter);
+    // O horário de daqui a 53 minutos (ou o minuto seguinte, se virar no meio do caminho).
+    const now = Date.now();
+    const times = [0, 60_000].map((extra) => clockOrDay(new Date(now + 53 * 60_000 + extra), "America/Sao_Paulo", new Date()));
+    await seen(new RegExp(`plano 92% \\(renova (${times.join("|")})\\)`));
+    setScript({ analista: "!plano 0.92 -1\nok" });
+    await type("e agora?");
+    await press(KEY.enter);
+    await seen("plano renovado");
+    assert.doesNotMatch(frame(), /plano 92%/);
+    setScript({});
+  });
+
   it("troca de agente pela lateral", async () => {
     await press(KEY.escape);
     await press(KEY.down, KEY.enter);

@@ -53,6 +53,16 @@ export function sparkline(values: readonly number[]): string {
   return values.map((value) => (top === 0 ? BLOCKS[0] : BLOCKS[Math.round((value / top) * (BLOCKS.length - 1))])).join("");
 }
 
+/** Um horário curto: "21:30" se for hoje, "dom 05:00" se for outro dia. */
+export function clockOrDay(at: Date | string, timeZone: string, now: Date): string {
+  const date = new Date(at);
+  const time = new Intl.DateTimeFormat("pt-BR", { timeZone, hour: "2-digit", minute: "2-digit" }).format(date);
+  const day = (value: Date) => new Intl.DateTimeFormat("en-CA", { timeZone }).format(value);
+  if (day(date) === day(now)) return time;
+  const weekday = new Intl.DateTimeFormat("pt-BR", { timeZone, weekday: "short" }).format(date).replace(".", "");
+  return `${weekday} ${time}`;
+}
+
 export function percent(ratio: number): string {
   return `${Math.round(ratio * 100)}%`;
 }

@@ -10,6 +10,7 @@
 //   !falhar <mensagem>             morre no meio, sem resultado
 //   !erro <mensagem>               termina com resultado de erro
 //   !dormir <ms>                   espera
+//   !plano <uso> <minutos>         o uso da janela de 5 horas (0 a 1) e daqui a quantos minutos ela renova (negativo: já renovou)
 //   !compactar                     a sessão é compactada no meio (compact_boundary)
 //   !contexto <tokens>             o contexto informado no fim (sem isto, cresce 2 mil por mensagem)
 //   !servico <ms>                  deixa um processo rodando em segundo plano (órfão) por <ms>
@@ -134,10 +135,17 @@ const tools = (option("--tools") ?? "").split(",").filter(Boolean);
 out({ type: "system", subtype: "init", session_id: sessionId, model: option("--model") ?? "fake", tools, cwd: process.cwd() });
 // O eco da mensagem que abre o turno, como o claude faz com --replay-user-messages.
 if (streaming) out({ type: "user", isReplay: true, message: { role: "user", content: prompt }, session_id: sessionId });
-out({
-  type: "rate_limit_event",
-  rate_limit_info: { unifiedWindows: { five_hour: { utilization: 0.1, resetsAt: 1795649400 }, seven_day: { utilization: 0.2, resetsAt: 1795939200 } } },
-});
+// O uso do plano, com as janelas renovando no futuro (5 horas: daqui a 2 h; semana: daqui a 3 dias).
+const planEvent = (fiveHour, fiveHourResetsIn) => {
+  const now = Math.floor(Date.now() / 1000);
+  out({
+    type: "rate_limit_event",
+    rate_limit_info: {
+      unifiedWindows: { five_hour: { utilization: fiveHour, resetsAt: now + fiveHourResetsIn }, seven_day: { utilization: 0.2, resetsAt: now + 3 * 86400 } },
+    },
+  });
+};
+planEvent(0.1, 2 * 3600);
 
 let toolCounter = 0;
 const useTool = (name, detail, error) => {
@@ -206,6 +214,9 @@ for (const line of source.split("\n")) {
     reply.push(`[${tool}] ${await callMcp(tool, args)}`);
   } else if (name === "sessao") {
     reply.push(`sessão com ${history.length} mensagens`);
+  } else if (name === "plano") {
+    const [use, minutes] = rest.split(" ").map(Number);
+    planEvent(use, Math.round(minutes * 60));
   } else if (name === "contexto") {
     contextTokens = Number(rest);
   } else if (name === "compactar") {

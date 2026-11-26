@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import { createElement as h, type ReactNode } from "react";
 import type { Dashboard } from "../dashboard.ts";
-import { ago, bar, bytes, duration, percent, sparkline } from "./format.ts";
+import { ago, bar, bytes, clockOrDay, duration, percent, sparkline } from "./format.ts";
 import { theme } from "./theme.ts";
 
 /*
@@ -33,14 +33,7 @@ function meter(name: string, ratio: number, width: number, after: string): React
   return h(Text, { wrap: "truncate-end" }, label(name), h(Text, { color }, filled), h(Text, { color: theme.border }, empty), ` ${after}`);
 }
 
-function when(iso: string, timeZone: string, now: Date): string {
-  const date = new Date(iso);
-  const time = new Intl.DateTimeFormat("pt-BR", { timeZone, hour: "2-digit", minute: "2-digit" }).format(date);
-  const day = (value: Date) => new Intl.DateTimeFormat("en-CA", { timeZone }).format(value);
-  if (day(date) === day(now)) return time;
-  const weekday = new Intl.DateTimeFormat("pt-BR", { timeZone, weekday: "short" }).format(date).replace(".", "");
-  return `${weekday} ${time}`;
-}
+const when = clockOrDay;
 
 export function renderDashboard(data: Dashboard, options: { width: number; timeZone: string }): ReactNode {
   const now = new Date(data.generatedAt);
@@ -86,17 +79,18 @@ export function renderDashboard(data: Dashboard, options: { width: number; timeZ
 
   // ---- plano ----
   const plan = data.plan;
-  const resets = (iso: string | undefined) => (iso && new Date(iso) > now ? ` · renova ${when(iso, timeZone, now)}` : "");
+  // Uma janela que já renovou: o número é da anterior; o novo chega com a próxima resposta.
+  const windowLine = (name: string, entry: { utilization: number; resetsAt: string | Date } | undefined) => {
+    if (!entry) return null;
+    const resetsAt = new Date(entry.resetsAt);
+    if (resetsAt <= now) return h(Text, null, label(name), h(Text, { color: theme.muted }, `renovou ${when(resetsAt, timeZone, now)} · o uso novo chega com a próxima resposta`));
+    return meter(name, entry.utilization, barWidth, `${percent(entry.utilization)} · renova ${when(resetsAt, timeZone, now)}`);
+  };
   const plano = card(
     "plano",
     "PLANO",
     half,
-    plan
-      ? [
-          plan.fiveHour ? meter("5 horas", plan.fiveHour.utilization, barWidth, `${percent(plan.fiveHour.utilization)}${resets(String(plan.fiveHour.resetsAt))}`) : null,
-          plan.sevenDay ? meter("semana", plan.sevenDay.utilization, barWidth, `${percent(plan.sevenDay.utilization)}${resets(String(plan.sevenDay.resetsAt))}`) : null,
-        ].filter(Boolean)
-      : [h(Text, { color: theme.muted }, "aparece depois do primeiro turno")],
+    plan ? [windowLine("5 horas", plan.fiveHour), windowLine("semana", plan.sevenDay)].filter(Boolean) : [h(Text, { color: theme.muted }, "aparece depois do primeiro turno")],
   );
 
   // ---- hoje ----

@@ -28,7 +28,7 @@ import { renderHelp } from "./help.ts";
 import { CONFIG_ROWS, CUSTOM_ROW, MODEL_OPTIONS, MODEL_ROW, renderConfig } from "./config.ts";
 import { ACCENTS, DEFAULT_ACCENT, isHexColor, setAccent } from "./theme.ts";
 import { type ProcessView, renderProcesses } from "./processes.ts";
-import { bytes } from "./format.ts";
+import { bytes, clockOrDay } from "./format.ts";
 import { editKey, followCursor, isNewlineKey, renderLines } from "./textarea.ts";
 import { SPINNER, theme } from "./theme.ts";
 
@@ -2062,12 +2062,25 @@ export function App({
   else if (mode === "routines") hints = "↑↓ escolhe · n nova · espaço liga/desliga · x roda agora · d apaga · esc volta";
   else if (mode === "attention") hints = "esc volta para a lateral";
   else hints = `enter envia · ctrl+n notas · esc lateral · :help`;
+  // O uso do plano, da última resposta do Claude Code. A partir da metade, quando a janela renova;
+  // depois que renovou, o número antigo não vale mais (o novo chega com a próxima resposta).
   const usage = state?.planUsage;
-  const plan = usage
-    ? ` · plano${usage.fiveHour ? ` ${Math.round(usage.fiveHour.utilization * 100)}%` : ""}${usage.sevenDay ? ` · semana ${Math.round(usage.sevenDay.utilization * 100)}%` : ""}`
-    : "";
+  const planNow = new Date();
+  const planWindow = (name: string, renewed: string, entry: { utilization: number; resetsAt: string | Date } | undefined): ReactNode[] => {
+    if (!entry) return [];
+    const resetsAt = new Date(entry.resetsAt);
+    if (resetsAt <= planNow) return [` · ${renewed}`];
+    const ratio = entry.utilization;
+    const color = ratio >= 0.95 ? theme.red : ratio >= 0.8 ? theme.amber : undefined;
+    return [
+      ` · ${name} `,
+      h(Text, { key: name, ...(color ? { color } : {}) }, `${Math.round(ratio * 100)}%`),
+      ratio >= 0.5 ? ` (renova ${clockOrDay(resetsAt, timeZone, planNow)})` : "",
+    ];
+  };
+  const plan = usage ? [...planWindow("plano", "plano renovado", usage.fiveHour), ...planWindow("semana", "semana renovada", usage.sevenDay)] : [];
   const status = connected
-    ? h(Text, { color: theme.muted }, h(Text, { color: theme.green }, "●"), " motor", plan)
+    ? h(Text, { color: theme.muted }, h(Text, { color: theme.green }, "●"), " motor", ...plan)
     : h(Text, { color: theme.red }, "motor desligado: rode neoterm daemon ou neoterm service on");
 
   return h(
