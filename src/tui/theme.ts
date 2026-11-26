@@ -5,6 +5,8 @@ export const theme = {
   muted: "#8A8F98",
   border: "#2A2D33",
   selected: "#1C2026",
+  /** Fundo das mensagens de quem usa, para separá-las das respostas dos agentes. */
+  person: "#1A2430",
   green: "#7FD18B",
   amber: "#E6B95C",
   red: "#F2877A",

@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { Box, Text, useApp, useInput, useWindowSize } from "ink";
+import { Box, type DOMElement, Text, Transform, useApp, useBoxMetrics, useInput, usePaste, useStdin, useWindowSize } from "ink";
 import { createElement as h, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MessagePart } from "../db/schema.ts";
 import type { NeotermEvent } from "../events.ts";
@@ -8,6 +8,11 @@ import type { NeotermState } from "../state.ts";
 import type { NeotermApi, RoutineItem, RunItem, ViewMessage, ViewScope } from "./api.ts";
 import { type FormState, formKey, renderForm, valuesOf } from "./form.ts";
 import { newAgentForm, newGroupForm, newRoutineForm } from "./forms.ts";
+import * as editor from "./editor.ts";
+import { clipboardImage, expandImages, pastedImages, shortenImages } from "./images.ts";
+import { displayPath, type Entry, filterEntries, listDir, parentOf, referenceFor, rootEntries } from "./files.ts";
+import { captureMouse } from "./mouse.ts";
+import { editKey, followCursor, isNewlineKey, renderLines } from "./textarea.ts";
 import { SPINNER, theme } from "./theme.ts";
 
 /*
@@ -24,9 +29,31 @@ type Item =
 
 type Mode = "chat" | "routines" | "form" | "attention";
 type Live = { agent: string; parts: MessagePart[] };
+/** As notas abertas à direita: as de um agente, com o texto em edição e o que já está no arquivo. */
+/**
+ * O navegador de arquivos do :path. `dir` null é o topo de um escopo com várias pastas; `filter`
+ * não nulo é o modo de filtrar (o / do nvim), com o que já foi digitado.
+ */
+type Picker = {
+  scope: string;
+  roots: string[];
+  workspace: string;
+  dir: string | null;
+  entries: Entry[];
+  index: number;
+  filter: string | null;
+  hidden: boolean;
+  error?: string;
+};
+type Notes = { slug: string; draft: editor.Draft; saved: string; path: string; saving: boolean; failed: boolean };
 type InkKey = Parameters<Parameters<typeof useInput>[0]>[1];
 
 const SIDEBAR_WIDTH = 30;
+/** Quantas linhas o input mostra antes de rolar junto com o cursor. */
+const INPUT_MAX_LINES = 8;
+/** Linhas que a roda do mouse rola por evento. */
+const WHEEL_LINES = 3;
+
 const scopeKey = (scope: { kind: string; slug: string }) => `${scope.kind}:${scope.slug}`;
 
 function itemsOf(state: NeotermState | null): Item[] {
@@ -56,6 +83,12 @@ function truncate(text: string, width: number): string {
   return chars.length > width ? `${chars.slice(0, Math.max(width - 1, 0)).join("")}…` : chars.join("");
 }
 
+/**
+ * Quando o ink quebra uma linha bem num espaço, a linha seguinte começa com ele. Um espaço só antes
+ * do texto é isso; recuos de verdade (listas aninhadas, código) têm dois ou mais e ficam.
+ */
+const dropWrapSpace = (line: string, index: number) => (index > 0 ? line.replace(/^ (?=\S)/, "") : line);
+
 /** O texto com as menções em destaque. */
 function withMentions(text: string, key: string): ReactNode {
   const pieces = text.split(/(@[\p{L}\p{N}_-]+)/u);
@@ -71,7 +104,17 @@ function withMentions(text: string, key: string): ReactNode {
 function renderParts(parts: MessagePart[], keyPrefix: string): ReactNode[] {
   return parts.flatMap((part, index) => {
     if (part.type === "text") {
-      return [h(Box, { key: `${keyPrefix}t${index}`, paddingLeft: 2, marginTop: index > 0 ? 1 : 0, flexShrink: 0 }, withMentions(part.text, "x"))];
+      // Cada bloco de texto do agente começa com um ponto; as ferramentas ficam recuadas, sem ele.
+      return [
+        h(
+          Box,
+          { key: `${keyPrefix}t${index}`, marginTop: index > 0 ? 1 : 0, flexShrink: 0 },
+          // Ponto com largura fixa e texto com base 0: se os dois encolhessem juntos, a largura
+          // do texto ficaria fracionária e o ink quebraria a linha uma coluna além do que recorta.
+          h(Box, { width: 2, flexShrink: 0 }, h(Text, { color: theme.green }, "●")),
+          h(Box, { flexGrow: 1, flexShrink: 1, flexBasis: 0 }, h(Transform, { transform: dropWrapSpace }, withMentions(part.text, "x"))),
+        ),
+      ];
     }
     const name = part.name.replace(/^mcp__neoterm__/, "");
     const lines = [
@@ -96,22 +139,44 @@ function renderParts(parts: MessagePart[], keyPrefix: string): ReactNode[] {
   });
 }
 
+/**
+ * A mensagem de quem usa: um bloco com fundo e uma barra à esquerda, para não se confundir com as
+ * respostas. `queued`: enviada enquanto o agente ainda responde; vai no próximo turno.
+ */
+function renderPerson(message: ViewMessage, inGroup: boolean, timeZone: string, queued = false): ReactNode {
+  const header = inGroup || queued
+    ? h(
+        Text,
+        null,
+        inGroup ? h(Text, { color: theme.accent, bold: true }, "você") : null,
+        h(Text, { color: theme.muted }, `${inGroup ? "  " : ""}${queued ? "na fila · vai quando ele terminar" : clock(message.createdAt, timeZone)}`),
+      )
+    : null;
+  return h(
+    Box,
+    {
+      key: message.id,
+      flexDirection: "column",
+      marginBottom: 1,
+      flexShrink: 0,
+      paddingX: 1,
+      backgroundColor: theme.person,
+      borderStyle: "bold",
+      borderTop: false,
+      borderRight: false,
+      borderBottom: false,
+      borderColor: queued ? theme.muted : theme.accent,
+    },
+    header,
+    withMentions(shortenImages(message.text), "p"),
+  );
+}
+
 function renderMessage(message: ViewMessage, inGroup: boolean, timeZone: string): ReactNode {
   const time = h(Text, { color: theme.muted }, `  ${clock(message.createdAt, timeZone)}`);
   switch (message.author) {
     case "person":
-      return inGroup
-        ? h(
-            Box,
-            { key: message.id, flexDirection: "column", marginBottom: 1, flexShrink: 0 },
-            h(Text, null, h(Text, { color: theme.accent, bold: true }, "você"), time),
-            h(Box, { paddingLeft: 2 }, withMentions(message.text, "p")),
-          )
-        : h(
-            Box,
-            { key: message.id, marginBottom: 1, flexShrink: 0 },
-            h(Text, { wrap: "wrap" }, h(Text, { color: theme.accent }, "› "), h(Text, { bold: true }, message.text)),
-          );
+      return renderPerson(message, inGroup, timeZone);
     case "routine":
       return h(
         Box,
@@ -155,8 +220,19 @@ function useDebounced(callback: () => void, ms: number): () => void {
   }, [ms]);
 }
 
-/** `cwd`: de onde a interface foi aberta; um caminho relativo digitado num formulário parte dela. */
-export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: string }): ReactNode {
+/**
+ * `cwd`: de onde a interface foi aberta; um caminho relativo digitado num formulário parte dela.
+ * `readClipboardImage`: lê a imagem do clipboard no ctrl+v (trocável nos testes).
+ */
+export function App({
+  api,
+  cwd = process.cwd(),
+  readClipboardImage = clipboardImage,
+}: {
+  api: NeotermApi;
+  cwd?: string;
+  readClipboardImage?: () => Promise<string | null>;
+}): ReactNode {
   const { exit } = useApp();
   const size = useWindowSize();
   const columns = size.columns || 100;
@@ -164,13 +240,22 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
   const [state, setState] = useState<NeotermState | null>(null);
   const [connected, setConnected] = useState(true);
   const [selected, setSelected] = useState(0);
-  const [focus, setFocus] = useState<"sidebar" | "main">("main");
+  const [focus, setFocus] = useState<"sidebar" | "main" | "notes" | "files">("main");
   const [mode, setMode] = useState<Mode>("chat");
   const [messages, setMessages] = useState<ViewMessage[]>([]);
   const [pending, setPending] = useState<Record<string, string[]>>({});
   const [live, setLive] = useState<Record<string, Live>>({});
-  const [draft, setDraft] = useState("");
-  const [scrollBack, setScrollBack] = useState(0);
+  const [draft, setDraft] = useState<editor.Draft>(editor.EMPTY);
+  // As imagens coladas no rascunho, pelo número que aparece no input: [imagem N].
+  const images = useRef(new Map<number, string>());
+  // Quantas linhas acima do fim da conversa a vista está; 0 acompanha as mensagens novas.
+  const [scrollUp, setScrollUp] = useState(0);
+  const viewportRef = useRef<DOMElement>(null);
+  const contentRef = useRef<DOMElement>(null);
+  const viewport = useBoxMetrics(viewportRef);
+  const content = useBoxMetrics(contentRef);
+  const maxScroll = Math.max(content.height - viewport.height, 0);
+  const lastContentHeight = useRef(0);
   const [form, setForm] = useState<FormState | null>(null);
   const [routines, setRoutines] = useState<RoutineItem[]>([]);
   const [routineIndex, setRoutineIndex] = useState(0);
@@ -289,7 +374,7 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
   // Ao trocar de conversa: carrega e marca como lida.
   useEffect(() => {
     setMessages([]);
-    setScrollBack(0);
+    setScrollUp(0);
     if (!currentKey) return;
     setUnread((current) => {
       if (!current.has(currentKey)) return current;
@@ -310,12 +395,35 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
     }
   }, [items]);
 
-  const anyLive = Object.keys(live).length > 0;
+  // Quem está trabalhando agora: pelo estado do motor e pelos turnos chegando ao vivo (que avisam
+  // antes do próximo /state), inclusive turnos dentro de grupos.
+  const working = useMemo(() => {
+    const slugs = new Set(Object.values(live).map((entry) => entry.agent));
+    for (const agent of state?.agents ?? []) if (agent.state === "running") slugs.add(agent.slug);
+    return slugs;
+  }, [live, state]);
+  const anyLive = working.size > 0 || (state?.groups.some((group) => group.busy) ?? false);
   useEffect(() => {
     if (!anyLive) return;
     const timer = setInterval(() => setFrame((value) => value + 1), 100);
     return () => clearInterval(timer);
   }, [anyLive]);
+
+  // Lendo mais acima, a vista fica onde está quando chega conteúdo novo embaixo.
+  useEffect(() => {
+    const grew = content.height - lastContentHeight.current;
+    lastContentHeight.current = content.height;
+    if (grew > 0) setScrollUp((value) => (value > 0 ? value + grew : 0));
+  }, [content.height]);
+  const scrollBy = (lines: number) => setScrollUp((value) => Math.min(Math.max(value + lines, 0), maxScroll));
+
+  // A roda do mouse rola a conversa, de onde estiver o foco.
+  const { stdin } = useStdin();
+  const onWheel = useRef((_direction: 1 | -1) => {});
+  onWheel.current = (direction) => {
+    if (mode === "chat") scrollBy(direction * WHEEL_LINES);
+  };
+  useEffect(() => captureMouse(stdin, (direction) => onWheel.current(direction)), [stdin]);
 
   const scopedRoutines = useMemo(
     () =>
@@ -392,19 +500,63 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
       (error: Error) => say(error.message),
     );
 
+  const clearDraft = () => {
+    setDraft(editor.EMPTY);
+    images.current = new Map();
+  };
+  const edit = (change: (current: editor.Draft) => editor.Draft) => setDraft(change);
+
+  const attach = (paths: string[]) => {
+    const tokens = paths.map((path) => {
+      const n = images.current.size + 1;
+      images.current.set(n, path);
+      return `[imagem ${n}]`;
+    });
+    edit((current) => {
+      const before = [...current.text].slice(0, current.cursor).join("");
+      return editor.insert(current, `${before && !/\s$/.test(before) ? " " : ""}${tokens.join(" ")} `);
+    });
+  };
+
+  /** A imagem do clipboard: o terminal não a repassa, então a interface vai buscar. */
+  const pasteClipboardImage = () =>
+    void readClipboardImage().then(
+      (path) => (path ? attach([path]) : say("nenhuma imagem no clipboard")),
+      (error: Error) => say(`não consegui ler o clipboard: ${error.message}`),
+    );
+
+  /** Texto colado: vazio é imagem no clipboard; caminhos de imagem viram [imagem N]; o resto é texto. */
+  const paste = (text: string) => {
+    if (!text.trim()) return pasteClipboardImage();
+    const paths = pastedImages(text);
+    if (paths) return attach(paths);
+    edit((current) => editor.insert(current, text.replace(/\r\n?/g, "\n")));
+  };
+
   const send = () => {
-    const text = draft.trim();
+    // :path no fim de uma mensagem começada abre o navegador sem enviar: o arquivo entra ali.
+    const typed = draft.text.trimEnd();
+    if (scope && /(^|\s):path$/.test(typed)) {
+      const kept = typed.slice(0, -":path".length);
+      setDraft({ text: kept, cursor: [...kept].length });
+      return openPicker();
+    }
+    const text = expandImages(draft.text, images.current).trim();
     if (!text || !scope) return;
-    setDraft("");
+    clearDraft();
     if (text === "/rotinas") return openRoutines();
+    if (text === ":notes" || text === ":notas") {
+      if (scope.kind !== "agent") return say("as notas são de cada agente: abra a conversa com um");
+      return openNotes(scope.slug);
+    }
     if (text === "/pausar" || text === "/retomar") {
       if (scope.kind !== "agent") return say("só agentes pausam");
       return run(api.setPaused(scope.slug, text === "/pausar"), text === "/pausar" ? `${scope.slug} pausado` : `${scope.slug} retomado`);
     }
-    if (text === "/ajuda") return say("/rotinas · /pausar · /retomar · esc volta para a lateral · ctrl+c sai");
+    if (text === "/ajuda") return say(":path escolhe um arquivo · :notes abre as notas · /rotinas · /pausar · /retomar · ctrl+enter, option+enter ou ctrl+j: nova linha · ctrl+v cola imagem · roda do mouse ou pgup/pgdn rola · ctrl+c sai");
     const key = scopeKey(scope);
     setPending((current) => ({ ...current, [key]: [...(current[key] ?? []), text] }));
-    setScrollBack(0);
+    setScrollUp(0);
     void api.send(scope, text).catch((error: Error) => {
       say(error.message);
       setPending((current) => ({ ...current, [key]: (current[key] ?? []).filter((entry) => entry !== text) }));
@@ -494,19 +646,226 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
 
   const handleChat = (input: string, key: InkKey) => {
     if (key.escape || key.tab) return setFocus("sidebar");
+    if (isNewlineKey(input, key)) return edit((current) => editor.insert(current, "\n"));
     if (key.return) return send();
-    if (key.backspace || key.delete) return setDraft((value) => [...value].slice(0, -1).join(""));
-    if (key.upArrow && !draft) return move(-1);
-    if (key.downArrow && !draft) return move(1);
-    if (key.pageUp) return setScrollBack((value) => Math.min(value + 3, Math.max(messages.length - 1, 0)));
-    if (key.pageDown) return setScrollBack((value) => Math.max(value - 3, 0));
-    if (key.ctrl && input === "u") return setDraft("");
+    // ↑↓ sem texto trocam de conversa; com texto, andam pelas linhas.
+    if (key.upArrow && !draft.text) return move(-1);
+    if (key.downArrow && !draft.text) return move(1);
+    if (key.pageUp) return scrollBy(Math.max(viewport.height - 2, 1));
+    if (key.pageDown) return scrollBy(-Math.max(viewport.height - 2, 1));
+    if (key.ctrl && input === "v") return pasteClipboardImage();
     if (key.ctrl && input === "r") return openRoutines();
-    if (input && !key.ctrl && !key.meta) setDraft((value) => value + input.replace(/[\r\n]+/g, " "));
+    // Sem bracketed paste, a colagem chega aqui como um bloco de vários caracteres.
+    if (input.length > 1 && !key.ctrl && !key.meta && !key.return) return paste(input);
+    // Sempre a partir do estado mais recente: teclas que chegam juntas não se atropelam.
+    setDraft((current) => editKey(current, input, key) ?? current);
   };
+
+  // ---------- notas ----------
+  const [notes, setNotes] = useState<Notes | null>(null);
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  const notesTop = useRef(0);
+  const notesAreaRef = useRef<DOMElement>(null);
+  const notesArea = useBoxMetrics(notesAreaRef);
+
+  /** Grava o que mudou; quem continuar editando enquanto isso fica com "não salvo". */
+  const saveNotes = useCallback(
+    async (current: Notes | null) => {
+      if (!current || current.draft.text === current.saved) return;
+      const { slug } = current;
+      const text = current.draft.text;
+      const update = (change: (entry: Notes) => Notes) => setNotes((entry) => (entry && entry.slug === slug ? change(entry) : entry));
+      update((entry) => ({ ...entry, saving: true }));
+      try {
+        await api.saveNotes(slug, text);
+        update((entry) => ({ ...entry, saved: text, saving: false, failed: false }));
+      } catch (error) {
+        update((entry) => ({ ...entry, saving: false, failed: true }));
+        say(`não salvei as notas: ${(error as Error).message}`);
+      }
+    },
+    [api, say],
+  );
+
+  // Salva sozinho logo depois que você para de digitar.
+  useEffect(() => {
+    if (!notes || notes.draft.text === notes.saved) return;
+    const timer = setTimeout(() => void saveNotes(notesRef.current), 600);
+    return () => clearTimeout(timer);
+  }, [notes?.draft.text, notes?.saved, saveNotes]);
+  // E ao fechar a interface.
+  useEffect(() => () => void saveNotes(notesRef.current), [saveNotes]);
+
+  const openNotes = (slug: string) => {
+    if (notesRef.current?.slug === slug) return setFocus("notes");
+    void saveNotes(notesRef.current);
+    api.notes(slug).then(
+      ({ text, path }) => {
+        notesTop.current = 0;
+        setNotes({ slug, draft: { text, cursor: [...text].length }, saved: text, path, saving: false, failed: false });
+        setFocus("notes");
+      },
+      (error: Error) => say(`não abri as notas: ${error.message}`),
+    );
+  };
+  const closeNotes = () => {
+    void saveNotes(notesRef.current);
+    setNotes(null);
+    setFocus("main");
+  };
+  // As notas são do agente da conversa: trocou de conversa, elas fecham (salvas).
+  useEffect(() => {
+    const open = notesRef.current;
+    if (open && currentKey !== `agent:${open.slug}`) {
+      void saveNotes(open);
+      setNotes(null);
+      setFocus((value) => (value === "notes" ? "main" : value));
+    }
+  }, [currentKey, saveNotes]);
+
+  const editNotes = (change: (draft: editor.Draft) => editor.Draft) =>
+    setNotes((entry) => (entry ? { ...entry, draft: change(entry.draft) } : entry));
+
+  const handleNotes = (input: string, key: InkKey) => {
+    if (key.escape) return closeNotes();
+    if (key.tab) return setFocus("main");
+    if (key.ctrl && input === "s") return void saveNotes(notesRef.current);
+    // Nas notas o enter é só quebra de linha.
+    if (key.return || isNewlineKey(input, key)) return editNotes((draft) => editor.insert(draft, "\n"));
+    const page = Math.max(notesArea.height - 1, 1);
+    if (key.pageUp || key.pageDown) {
+      return editNotes((draft) => {
+        let next = draft;
+        for (let step = 0; step < page; step++) next = (key.pageUp ? editor.up(next) : editor.down(next)) ?? next;
+        return next;
+      });
+    }
+    editNotes((draft) => editKey(draft, input, key) ?? draft);
+  };
+
+  // ---------- arquivos (:path) ----------
+  const [picker, setPicker] = useState<Picker | null>(null);
+  const pickerRef = useRef(picker);
+  pickerRef.current = picker;
+  const pickerTop = useRef(0);
+  const pickerAreaRef = useRef<DOMElement>(null);
+  const pickerArea = useBoxMetrics(pickerAreaRef);
+  const pickerVisible = picker ? (picker.filter === null ? picker.entries : filterEntries(picker.entries, picker.filter)) : [];
+
+  /** Abre uma pasta do escopo (ou o topo, com `null`), deixando selecionado `select`, se vier. */
+  const loadDir = async (base: Picker, dir: string | null, select?: string) => {
+    let entries: Entry[] = [];
+    let error: string | undefined;
+    try {
+      entries = dir === null ? rootEntries(base.roots) : await listDir(dir, base.hidden);
+    } catch (problem) {
+      error = (problem as NodeJS.ErrnoException).code === "EACCES" || (problem as NodeJS.ErrnoException).code === "EPERM" ? "sem permissão para ler esta pasta" : (problem as Error).message;
+    }
+    const index = Math.max(select ? entries.findIndex((entry) => entry.path === select) : 0, 0);
+    pickerTop.current = 0;
+    setPicker((current) => (current && current.scope === base.scope ? { ...current, dir, entries, index, filter: null, error } : current));
+  };
+
+  const openPicker = () => {
+    if (!scope) return;
+    // Já aberto nesta conversa (você voltou para o input com tab): só volta para ele.
+    if (pickerRef.current?.scope === currentKey) return setFocus("files");
+    const roots =
+      scope.kind === "agent"
+        ? (state?.agents.find((agent) => agent.slug === scope.slug)?.folders ?? [])
+        : [state?.groups.find((group) => group.slug === scope.slug)?.folder].filter((folder): folder is string => Boolean(folder));
+    if (roots.length === 0) return say("esta conversa não tem pastas");
+    const base: Picker = { scope: currentKey, roots, workspace: roots[0]!, dir: null, entries: [], index: 0, filter: null, hidden: false };
+    setPicker(base);
+    setFocus("files");
+    void loadDir(base, roots.length === 1 ? roots[0]! : null);
+  };
+  const closePicker = () => {
+    setPicker(null);
+    setFocus("main");
+  };
+  // O navegador é da conversa aberta: trocou de conversa, ele fecha.
+  useEffect(() => {
+    if (pickerRef.current && pickerRef.current.scope !== currentKey) {
+      setPicker(null);
+      setFocus((value) => (value === "files" ? "main" : value));
+    }
+  }, [currentKey]);
+
+  /** Põe o caminho no input, onde está o cursor, e volta para a conversa. */
+  const insertReference = (path: string) => {
+    if (!picker) return;
+    const reference = referenceFor(path, picker.workspace);
+    edit((current) => {
+      const before = [...current.text].slice(0, current.cursor).join("");
+      return editor.insert(current, `${before && !/\s$/.test(before) ? " " : ""}${reference} `);
+    });
+    closePicker();
+  };
+
+  const openEntry = (entry: Entry | undefined) => {
+    if (!picker || !entry) return;
+    if (entry.dir) return void loadDir(picker, entry.path);
+    insertReference(entry.path);
+  };
+  const goUp = () => {
+    if (!picker || picker.dir === null) return;
+    const parent = parentOf(picker.dir, picker.roots);
+    if (parent !== null) return void loadDir(picker, parent, picker.dir);
+    // Na raiz de uma das pastas: sobe para a lista delas, se houver mais de uma.
+    if (picker.roots.length > 1) void loadDir(picker, null, picker.dir);
+  };
+  const movePicker = (step: number) =>
+    setPicker((current) => {
+      if (!current) return current;
+      const count = (current.filter === null ? current.entries : filterEntries(current.entries, current.filter)).length;
+      return { ...current, index: Math.min(Math.max(current.index + step, 0), Math.max(count - 1, 0)) };
+    });
+
+  const handlePicker = (input: string, key: InkKey) => {
+    if (!picker) return;
+    const selected = pickerVisible[Math.min(picker.index, pickerVisible.length - 1)];
+    if (key.upArrow) return movePicker(-1);
+    if (key.downArrow) return movePicker(1);
+    if (key.pageUp) return movePicker(-Math.max(pickerArea.height - 1, 1));
+    if (key.pageDown) return movePicker(Math.max(pickerArea.height - 1, 1));
+    if (key.return) return openEntry(selected);
+    if (key.tab) return setFocus("main");
+    // Filtrando (o / do nvim): as letras vão para o filtro; esc desfaz.
+    if (picker.filter !== null) {
+      if (key.escape) return setPicker({ ...picker, filter: null, index: 0 });
+      if (key.backspace || key.delete) {
+        return setPicker({ ...picker, filter: picker.filter ? [...picker.filter].slice(0, -1).join("") : null, index: 0 });
+      }
+      if (input && !key.ctrl && !key.meta) return setPicker({ ...picker, filter: picker.filter + input, index: 0 });
+      return;
+    }
+    if (key.escape || input === "q") return closePicker();
+    if (input === "j") return movePicker(1);
+    if (input === "k") return movePicker(-1);
+    if (input === "g") return movePicker(-Number.MAX_SAFE_INTEGER);
+    if (input === "G") return movePicker(Number.MAX_SAFE_INTEGER);
+    if (input === "l" || key.rightArrow) return openEntry(selected);
+    if (input === "h" || input === "-" || key.leftArrow || key.backspace || key.delete) return goUp();
+    if (input === "/") return setPicker({ ...picker, filter: "", index: 0 });
+    if (input === " " && selected) return insertReference(selected.path);
+    if (input === ".") {
+      const next = { ...picker, hidden: !picker.hidden };
+      setPicker(next);
+      return void loadDir(next, picker.dir, selected?.path);
+    }
+  };
+
+  usePaste(paste, { isActive: mode === "chat" && focus === "main" && scope !== null });
+  usePaste((text) => editNotes((draft) => editor.insert(draft, text.replace(/\r\n?/g, "\n"))), {
+    isActive: mode === "chat" && focus === "notes" && notes !== null,
+  });
 
   useInput((input, key) => {
     if (mode === "form") return handleForm(input, key);
+    if (focus === "notes" && notes) return handleNotes(input, key);
+    if (focus === "files" && picker) return handlePicker(input, key);
     if (focus === "sidebar") return handleSidebar(input, key);
     if (mode === "routines") return handleRoutines(input, key);
     if (mode === "attention") return handleAttention(input, key);
@@ -521,12 +880,137 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
     return handleChat(input, key);
   });
 
+  // ---------- input ----------
+  /** O rascunho com o cursor, em linhas; só uma linha entre traços, sem caixa em volta. */
+  function renderInput(): ReactNode {
+    const typing = focus === "main";
+    const prompt = (first: boolean) => h(Text, { color: typing ? theme.accent : theme.muted, bold: true }, first ? "> " : "  ");
+    let lines: ReactNode[];
+    if (!draft.text) {
+      const hint = scope?.kind === "group" ? "mensagem para o grupo · @nome chama um agente" : `mensagem para ${scope?.slug} · /ajuda`;
+      lines = [
+        h(Text, { key: "hint", wrap: "truncate-end" }, prompt(true), typing ? h(Text, { inverse: true }, " ") : null, h(Text, { color: theme.muted }, hint)),
+      ];
+    } else {
+      const first = followCursor(draft, Number.POSITIVE_INFINITY, INPUT_MAX_LINES);
+      lines = renderLines(draft, { first, count: INPUT_MAX_LINES, focused: typing, prefix: (index) => prompt(index === 0) });
+    }
+    return h(
+      Box,
+      {
+        flexDirection: "column",
+        flexShrink: 0,
+        borderStyle: "single",
+        borderLeft: false,
+        borderRight: false,
+        borderColor: theme.border,
+      },
+      ...lines,
+    );
+  }
+
+  /** O navegador de arquivos, à direita da conversa, no lugar das notas enquanto está aberto. */
+  function renderPicker(open: Picker): ReactNode {
+    const focused = focus === "files";
+    const height = Math.max(pickerArea.height, 1);
+    const index = Math.min(open.index, Math.max(pickerVisible.length - 1, 0));
+    let top = Math.min(pickerTop.current, Math.max(pickerVisible.length - height, 0));
+    if (index < top) top = index;
+    if (index >= top + height) top = index - height + 1;
+    pickerTop.current = top;
+    const width = Math.max(Math.floor(mainWidth * 0.4), 28) - 2;
+    const lines: ReactNode[] = open.error
+      ? [h(Text, { key: "error", color: theme.red, wrap: "wrap" }, open.error)]
+      : pickerVisible.length === 0
+        ? [h(Text, { key: "empty", color: theme.muted }, open.filter ? "nada com esse nome" : "pasta vazia")]
+        : pickerVisible.slice(top, top + height).map((entry, at) => {
+            const active = top + at === index;
+            const bg = active ? { backgroundColor: theme.selected } : {};
+            const name = open.dir === null ? entry.path.replace(homedir(), "~") : entry.name;
+            const label = entry.dir ? `▸ ${name}/` : `  ${name}`;
+            return h(
+              Text,
+              { key: entry.path, wrap: "truncate-end", ...bg },
+              h(Text, { ...bg }, active && focused ? "▌" : " "),
+              h(Text, { color: entry.dir ? theme.accent : undefined, bold: active, ...bg }, label.padEnd(width - 1)),
+            );
+          });
+    return h(
+      Box,
+      {
+        width: Math.max(Math.floor(mainWidth * 0.4), 28),
+        flexShrink: 0,
+        flexDirection: "column",
+        marginLeft: 1,
+        paddingLeft: 1,
+        borderStyle: "single",
+        borderTop: false,
+        borderBottom: false,
+        borderRight: false,
+        borderColor: focused ? theme.accent : theme.border,
+      },
+      h(
+        Text,
+        { wrap: "truncate-start" },
+        h(Text, { bold: true, color: focused ? theme.accent : undefined }, "ARQUIVOS"),
+        h(Text, { color: theme.muted }, ` · ${displayPath(open.dir, open.roots)}${open.hidden ? " · com ocultos" : ""}`),
+      ),
+      open.filter !== null
+        ? h(Text, { wrap: "truncate-start" }, h(Text, { color: theme.accent }, "/"), open.filter, focused ? h(Text, { inverse: true }, " ") : null)
+        : null,
+      h(Box, { ref: pickerAreaRef, flexDirection: "column", flexGrow: 1, flexShrink: 1, flexBasis: 0, overflow: "hidden", marginTop: 1 }, ...lines),
+      h(Text, { color: theme.muted, wrap: "truncate-end" }, "enter abre · h sobe · / filtra · esc fecha"),
+    );
+  }
+
+  /** O painel das notas, à direita da conversa. */
+  function renderNotes(open: Notes): ReactNode {
+    const focused = focus === "notes";
+    const height = Math.max(notesArea.height, 1);
+    notesTop.current = followCursor(open.draft, notesTop.current, height);
+    const status = open.failed ? "não salvo" : open.saving ? "salvando…" : open.draft.text === open.saved ? "salvo" : "editando";
+    const area = open.draft.text
+      ? renderLines(open.draft, { first: notesTop.current, count: height, focused })
+      : [
+          h(
+            Text,
+            { key: "empty", wrap: "wrap" },
+            focused ? h(Text, { inverse: true }, " ") : null,
+            h(Text, { color: theme.muted }, focused ? " escreva aqui" : "sem notas"),
+          ),
+        ];
+    return h(
+      Box,
+      {
+        width: Math.max(Math.floor(mainWidth * 0.4), 28),
+        flexShrink: 0,
+        flexDirection: "column",
+        marginLeft: 1,
+        paddingLeft: 1,
+        borderStyle: "single",
+        borderTop: false,
+        borderBottom: false,
+        borderRight: false,
+        borderColor: focused ? theme.accent : theme.border,
+      },
+      h(
+        Text,
+        { wrap: "truncate-end" },
+        h(Text, { bold: true, color: focused ? theme.accent : undefined }, "NOTAS"),
+        h(Text, { color: open.failed ? theme.red : theme.muted }, ` · ${status}`),
+      ),
+      h(Box, { ref: notesAreaRef, flexDirection: "column", flexGrow: 1, flexShrink: 1, flexBasis: 0, overflow: "hidden", marginTop: 1 }, ...area),
+      h(Text, { color: theme.muted, wrap: "truncate-start" }, open.path.replace(homedir(), "~")),
+    );
+  }
+
   // ---------- lateral ----------
   const inner = SIDEBAR_WIDTH - 3;
   const row = (key: string, active: boolean, left: ReactNode[], leftText: string, right = "", rightColor: string = theme.muted) => {
     const space = Math.max(inner - [...leftText].length - [...right].length, 1);
     const bg = active ? { backgroundColor: theme.selected } : {};
-    return keep(key, h(
+    // Um respiro de uma linha entre os itens do menu.
+    return h(Box, { key, flexShrink: 0, marginBottom: 1 }, h(
       Text,
       { wrap: "truncate-end", ...bg },
       h(Text, { ...bg }, active && focus === "sidebar" ? "▌" : " "),
@@ -547,11 +1031,20 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
     state.agents.forEach((agent) => {
       const at = items.findIndex((candidate) => candidate.kind === "agent" && candidate.slug === agent.slug);
       const active = at === index;
+      const busy = working.has(agent.slug);
       const glyph =
-        agent.state === "running" ? h(Text, { color: theme.green }, "●") : agent.state === "paused" ? h(Text, { color: theme.amber }, "‖") : h(Text, { color: theme.muted }, "○");
+        busy ? h(Text, { color: theme.green }, "●") : agent.state === "paused" ? h(Text, { color: theme.amber }, "‖") : h(Text, { color: theme.muted }, "○");
+      // Trabalhando: um spinner girando logo depois do nome.
+      const spinner = busy ? ` ${SPINNER[frame % SPINNER.length]}` : "";
       const dot = unread.has(`agent:${agent.slug}`) ? " •" : "";
       sidebar.push(
-        row(`a-${agent.slug}`, active, [glyph, h(Text, { bold: active }, ` ${agent.slug}`), h(Text, { color: theme.accent }, dot)], `○ ${agent.slug}${dot}`, agent.state === "paused" ? "pausado" : ""),
+        row(
+          `a-${agent.slug}`,
+          active,
+          [glyph, h(Text, { bold: active }, ` ${agent.slug}`), h(Text, { color: theme.green }, spinner), h(Text, { color: theme.accent }, dot)],
+          `○ ${agent.slug}${spinner}${dot}`,
+          agent.state === "paused" && !busy ? "pausado" : "",
+        ),
       );
     });
     for (const problem of state.problems) sidebar.push(h(Text, { key: `pr-${problem.slug}`, color: theme.red, wrap: "truncate-end" }, `  ✗ ${problem.slug}`));
@@ -560,14 +1053,14 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
       const at = items.findIndex((candidate) => candidate.kind === "group" && candidate.slug === group.slug);
       const active = at === index;
       const dot = unread.has(`group:${group.slug}`) ? " •" : "";
-      const right = group.waiting ? "!" : group.busy ? "●" : "";
+      const spinner = group.busy && !group.waiting ? ` ${SPINNER[frame % SPINNER.length]}` : "";
       sidebar.push(
         row(
           `g-${group.slug}`,
           active,
-          [h(Text, { color: theme.muted }, "#"), h(Text, { bold: active }, ` ${group.slug}`), h(Text, { color: theme.accent }, dot)],
-          `# ${group.slug}${dot}`,
-          right,
+          [h(Text, { color: theme.muted }, "#"), h(Text, { bold: active }, ` ${group.slug}`), h(Text, { color: theme.green }, spinner), h(Text, { color: theme.accent }, dot)],
+          `# ${group.slug}${spinner}${dot}`,
+          group.waiting ? "!" : "",
           group.waiting ? theme.amber : theme.green,
         ),
       );
@@ -600,7 +1093,9 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
   // ---------- cabeçalho ----------
   const agentState = scope?.kind === "agent" ? state?.agents.find((agent) => agent.slug === scope.slug) : undefined;
   const groupState = scope?.kind === "group" ? state?.groups.find((group) => group.slug === scope.slug) : undefined;
-  let headerLeft: ReactNode = h(Text, { bold: true }, "neoterm");
+  // O nome da conversa em destaque: o terminal não muda o tamanho da letra, então vai num selo.
+  const title = (text: string) => h(Text, { bold: true, color: theme.onAccent, backgroundColor: theme.accent }, ` ${text} `);
+  let headerLeft: ReactNode = title("neoterm");
   let headerRight: ReactNode = null;
   if (mode === "form" && form) {
     headerLeft = h(Text, null, h(Text, { bold: true }, form.title), form.subtitle ? h(Text, { color: theme.muted }, ` · ${form.subtitle}`) : null);
@@ -610,7 +1105,7 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
     headerLeft = h(
       Text,
       null,
-      h(Text, { bold: true }, mode === "routines" ? `rotinas · ${agentState.slug}` : agentState.slug),
+      title(mode === "routines" ? `rotinas · ${agentState.slug}` : agentState.slug),
       agentState.title ? h(Text, { color: theme.muted }, ` · ${agentState.title}`) : null,
       agentState.folders[0]
         ? h(
@@ -630,7 +1125,7 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
     headerLeft = h(
       Text,
       null,
-      h(Text, { bold: true }, mode === "routines" ? `rotinas · #${groupState.slug}` : `# ${groupState.slug}`),
+      title(mode === "routines" ? `rotinas · #${groupState.slug}` : `# ${groupState.slug}`),
       h(Text, { color: theme.muted }, ` · ${groupState.folder.replace(homedir(), "~")}`),
     );
     headerRight = groupState.waiting
@@ -704,11 +1199,20 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
     body = h(Box, { flexDirection: "column", paddingTop: 1, overflow: "hidden", flexGrow: 1, flexShrink: 1, flexBasis: 0 }, ...lines.map((line, at) => keep(`r${at}`, line)));
   } else if (scope) {
     const inGroup = scope.kind === "group";
-    const shown = scrollBack > 0 ? messages.slice(0, -scrollBack) : messages;
-    const waiting = (pending[currentKey] ?? []).map((text, position) =>
-      renderMessage({ id: `pending-${position}`, author: "person", text, parts: [], meta: {}, createdAt: new Date().toISOString() }, inGroup, timeZone),
-    );
+    const shown = messages;
     const current = live[currentKey];
+    // Enquanto o agente responde, o que você manda espera o próximo turno: fica embaixo, na fila,
+    // e o streaming continua preso à conversa em andamento. Logo que um turno começa (ainda sem
+    // nada escrito), a mensagem dele pode não ter chegado do motor: fica acima do indicador.
+    const streaming = current !== undefined && current.parts.length > 0;
+    const waiting = (pending[currentKey] ?? []).map((text, position) =>
+      renderPerson(
+        { id: `pending-${position}`, author: "person", text, parts: [], meta: {}, createdAt: new Date().toISOString() },
+        inGroup,
+        timeZone,
+        streaming,
+      ),
+    );
     const liveBlock = current
       ? h(
           Box,
@@ -722,13 +1226,29 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
       shown.length === 0 && waiting.length === 0 && !current
         ? h(Text, { key: "empty", color: theme.muted }, inGroup ? "Conversa vazia. Escreva para o grupo; @nome chama um agente." : `Conversa vazia. Escreva para ${scope.slug}.`)
         : null;
+    // A conversa inteira numa caixa da altura dela; a vista mostra a janela pedida por scrollUp.
+    // Enquanto cabe, fica encostada embaixo; quando passa, rola por linhas com contentOffsetY.
+    const overflowing = content.hasMeasured && viewport.hasMeasured && content.height > viewport.height;
+    const offset = overflowing ? maxScroll - Math.min(scrollUp, maxScroll) : 0;
     body = h(
       Box,
-      { flexDirection: "column", justifyContent: "flex-end", flexGrow: 1, flexShrink: 1, flexBasis: 0, overflow: "hidden", paddingTop: 1 },
-      ...shown.map((message) => renderMessage(message, inGroup, timeZone)),
-      ...waiting,
-      liveBlock,
-      empty,
+      {
+        ref: viewportRef,
+        flexDirection: "column",
+        justifyContent: overflowing ? "flex-start" : "flex-end",
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 0,
+        overflow: "hidden",
+        contentOffsetY: offset,
+      },
+      h(
+        Box,
+        { ref: contentRef, flexDirection: "column", flexShrink: 0, paddingTop: 1 },
+        ...shown.map((message) => renderMessage(message, inGroup, timeZone)),
+        ...(streaming ? [liveBlock, ...waiting] : [...waiting, liveBlock]),
+        empty,
+      ),
     );
   } else if (state && state.agents.length === 0) {
     body = h(
@@ -741,30 +1261,28 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
     body = h(Box, { paddingTop: 1 }, h(Text, { color: theme.muted }, "Escolha um agente ou grupo na lateral."));
   }
 
-  const input =
-    mode === "chat" && scope
-      ? h(
-          Box,
-          { borderStyle: "round", borderColor: focus === "main" ? theme.accent : theme.border, paddingX: 1, flexShrink: 0 },
-          h(
-            Text,
-            { wrap: "truncate-start" },
-            h(Text, { color: theme.accent, bold: true }, "> "),
-            draft
-              ? h(Text, null, draft)
-              : h(Text, { color: theme.muted }, scope.kind === "group" ? "mensagem para o grupo · @nome chama um agente" : `mensagem para ${scope.slug} · /ajuda`),
-            focus === "main" ? h(Text, { inverse: true }, " ") : null,
-          ),
-        )
-      : null;
+  const input = mode === "chat" && scope ? renderInput() : null;
+  const notesPanel =
+    mode !== "chat"
+      ? null
+      : picker && picker.scope === currentKey
+        ? renderPicker(picker)
+        : notes && currentKey === `agent:${notes.slug}`
+          ? renderNotes(notes)
+          : null;
 
   // ---------- rodapé ----------
   let hints: string;
   if (mode === "form") hints = "tab próximo · ←→ opções · espaço marca · enter avança · ctrl+s salva · esc cancela";
+  else if (focus === "files") {
+    hints = picker?.filter !== null
+      ? "digite para filtrar · ↑↓ escolhe · enter abre · esc limpa o filtro"
+      : "j/k escolhe · enter/l abre ou insere · h sobe · espaço insere pasta · / filtra · . ocultos · tab conversa · esc fecha";
+  } else if (focus === "notes") hints = "enter nova linha · salva sozinho (ctrl+s agora) · tab volta à conversa · esc fecha";
   else if (focus === "sidebar") hints = "↑↓ escolhe · enter abre · n novo agente · g novo grupo · r rotinas · p pausa · q sai";
   else if (mode === "routines") hints = "↑↓ escolhe · n nova · espaço liga/desliga · x roda agora · d apaga · esc volta";
   else if (mode === "attention") hints = "esc volta para a lateral";
-  else hints = "enter envia · esc lateral · ↑↓ troca (sem texto) · pgup/pgdn rola · ctrl+r rotinas";
+  else hints = `enter envia · ctrl+enter nova linha · ctrl+v imagem · ${notes ? ":notes volta às notas" : ":notes notas"} · esc lateral · ctrl+r rotinas`;
   const usage = state?.planUsage;
   const plan = usage
     ? ` · plano${usage.fiveHour ? ` ${Math.round(usage.fiveHour.utilization * 100)}%` : ""}${usage.sevenDay ? ` · semana ${Math.round(usage.sevenDay.utilization * 100)}%` : ""}`
@@ -802,6 +1320,7 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
           {
             justifyContent: "space-between",
             flexShrink: 0,
+            marginTop: 1,
             borderStyle: "single",
             borderTop: false,
             borderLeft: false,
@@ -811,8 +1330,12 @@ export function App({ api, cwd = process.cwd() }: { api: NeotermApi; cwd?: strin
           h(Box, { flexShrink: 1, overflow: "hidden" }, h(Text, { wrap: "truncate-end" }, headerLeft)),
           headerRight ? h(Box, { flexShrink: 0, marginLeft: 2 }, headerRight) : null,
         ),
-        body,
-        input,
+        h(
+          Box,
+          { flexDirection: "row", flexGrow: 1, flexShrink: 1, flexBasis: 0 },
+          h(Box, { flexDirection: "column", flexGrow: 1, flexShrink: 1, flexBasis: 0 }, body, input),
+          notesPanel,
+        ),
       ),
     ),
     h(
