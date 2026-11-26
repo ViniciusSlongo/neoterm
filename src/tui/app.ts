@@ -1444,7 +1444,8 @@ export function App({
     return h(
       Box,
       {
-        width: Math.max(Math.floor(mainWidth * 0.4), 28),
+        // Estreita: dá para deixar fixada sem apertar a conversa.
+        width: Math.min(Math.max(Math.floor(mainWidth * 0.28), 30), 44),
         flexShrink: 0,
         flexDirection: "column",
         marginLeft: 1,
