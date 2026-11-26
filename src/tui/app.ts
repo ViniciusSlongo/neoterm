@@ -247,6 +247,22 @@ function renderMessage(message: ViewMessage, inGroup: boolean, timeZone: string)
   }
 }
 
+/**
+ * O ícone girando. Tem o próprio relógio: girar redesenha só ele, não a tela inteira (com um agente
+ * trabalhando, um relógio na App redesenhava tudo 10 vezes por segundo e travava a digitação).
+ */
+function Spinner({ color, before = "", after = "" }: { color: string; before?: string; after?: string }): ReactNode {
+  const [at, setAt] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setAt((value) => (value + 1) % SPINNER.length), 100);
+    return () => clearInterval(timer);
+  }, []);
+  return h(Text, { color }, `${before}${SPINNER[at]}${after}`);
+}
+
+/** Quantas mensagens a conversa desenha; as anteriores entram ao rolar até o topo. */
+const HISTORY_PAGE = 30;
+
 /** Uma caixa que não encolhe: quando falta altura, quem corta é o contêiner, não as linhas. */
 function keep(key: string, ...children: ReactNode[]): ReactNode {
   return h(Box, { key, flexShrink: 0, flexDirection: "column" }, ...children);
@@ -318,7 +334,6 @@ export function App({
   const [flash, setFlash] = useState<string | null>(null);
   const [unread, setUnread] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [frame, setFrame] = useState(0);
   const formReturn = useRef<Mode>("chat");
 
   const items = useMemo(() => itemsOf(state), [state]);
@@ -432,6 +447,7 @@ export function App({
   useEffect(() => {
     setMessages([]);
     setScrollTop(null);
+    setHistoryCount(HISTORY_PAGE);
     if (!currentKey) return;
     setUnread((current) => {
       if (!current.has(currentKey)) return current;
@@ -459,17 +475,26 @@ export function App({
     for (const agent of state?.agents ?? []) if (agent.state === "running") slugs.add(agent.slug);
     return slugs;
   }, [live, state]);
-  const anyLive = working.size > 0 || (state?.groups.some((group) => group.busy) ?? false);
-  useEffect(() => {
-    if (!anyLive) return;
-    const timer = setInterval(() => setFrame((value) => value + 1), 100);
-    return () => clearInterval(timer);
-  }, [anyLive]);
 
   /** Rola `lines` para cima (negativo desce); chegando ao fim, volta a acompanhar as novas. */
+  // A conversa desenha só as últimas mensagens; chegando ao topo, entram mais (e a vista fica onde
+  // estava, descontando o que entrou acima).
+  const [historyCount, setHistoryCount] = useState(HISTORY_PAGE);
+  const growFrom = useRef<number | null>(null);
+  useEffect(() => {
+    if (growFrom.current === null || content.height === growFrom.current) return;
+    const added = content.height - growFrom.current;
+    growFrom.current = null;
+    // Quem já voltou ao fim (null) continua no fim; quem está lendo fica na mesma mensagem.
+    setScrollTop((value) => (value === null ? null : value + added));
+  }, [content.height]);
   const scrollBy = (lines: number) =>
     setScrollTop((value) => {
       const top = Math.min(Math.max((value ?? maxScroll) - lines, 0), maxScroll);
+      if (top === 0 && lines > 0 && messages.length > historyCount && growFrom.current === null) {
+        growFrom.current = content.height;
+        setHistoryCount((count) => count + HISTORY_PAGE);
+      }
       return top >= maxScroll ? null : top;
     });
 
@@ -1413,7 +1438,7 @@ export function App({
       const glyph =
         busy ? h(Text, { color: theme.green }, "●") : agent.state === "paused" ? h(Text, { color: theme.amber }, "‖") : h(Text, { color: theme.muted }, "○");
       // Trabalhando: um spinner girando logo depois do nome.
-      const spinner = busy ? ` ${SPINNER[frame % SPINNER.length]}` : "";
+      const spinner = busy ? " ⠋" : "";
       const dot = unread.has(`agent:${agent.slug}`) ? " •" : "";
       // Lembrete das notas: tarefas abertas (☐ 2) ou só que há notas (✎).
       const noteMark = agent.notes?.openTasks ? ` ☐${agent.notes.openTasks}` : agent.notes?.has ? " ✎" : "";
@@ -1424,7 +1449,7 @@ export function App({
           [
             glyph,
             h(Text, { bold: active }, ` ${agent.slug}`),
-            h(Text, { color: theme.green }, spinner),
+            busy ? h(Spinner, { key: "spin", color: theme.green, before: " " }) : null,
             h(Text, { color: theme.accent }, dot),
             h(Text, { color: theme.muted }, noteMark),
           ],
@@ -1439,7 +1464,7 @@ export function App({
       const at = items.findIndex((candidate) => candidate.kind === "group" && candidate.slug === group.slug);
       const active = at === index;
       const dot = unread.has(`group:${group.slug}`) ? " •" : "";
-      const spinner = group.busy && !group.waiting ? ` ${SPINNER[frame % SPINNER.length]}` : "";
+      const spinner = group.busy && !group.waiting ? " ⠋" : "";
       sidebar.push(
         row(
           `g-${group.slug}`,
@@ -1557,6 +1582,14 @@ export function App({
       ? h(Text, { color: theme.amber }, "esperando você")
       : h(Text, { color: theme.muted }, groupState.members.join(" · "));
   }
+
+  // O histórico desenhado só muda quando as mensagens mudam: digitar não redesenha a conversa.
+  const historyInGroup = scope?.kind === "group";
+  const hiddenHistory = Math.max(messages.length - historyCount, 0);
+  const historyElements = useMemo(
+    () => messages.slice(hiddenHistory).map((message) => renderMessage(message, historyInGroup, timeZone)),
+    [messages, hiddenHistory, historyInGroup, timeZone, theme.accent],
+  );
 
   // ---------- corpo ----------
   const mainWidth = Math.max(columns - SIDEBAR_WIDTH - 3, 20);
@@ -1694,7 +1727,7 @@ export function App({
           { key: "live", flexDirection: "column", marginBottom: 1, flexShrink: 0 },
           inGroup ? h(Text, { bold: true }, current.agent) : null,
           ...renderParts(current.parts, "live"),
-          h(Text, { key: "spin" }, h(Text, { color: theme.accent }, `  ${SPINNER[frame % SPINNER.length]} `), h(Text, { color: theme.muted }, "trabalhando…")),
+          h(Text, { key: "spin" }, h(Spinner, { color: theme.accent, before: "  ", after: " " }), h(Text, { color: theme.muted }, "trabalhando…")),
         )
       : null;
     const empty =
@@ -1720,7 +1753,8 @@ export function App({
       h(
         Box,
         { ref: contentRef, flexDirection: "column", flexShrink: 0, paddingTop: 1 },
-        ...shown.map((message) => renderMessage(message, inGroup, timeZone)),
+        hiddenHistory ? h(Text, { key: "older", color: theme.muted }, `↑ ${hiddenHistory} ${hiddenHistory === 1 ? "mensagem anterior" : "mensagens anteriores"} · role para ver`) : null,
+        ...historyElements,
         ...(streaming ? [liveBlock, ...waiting] : [...waiting, liveBlock]),
         empty,
       ),

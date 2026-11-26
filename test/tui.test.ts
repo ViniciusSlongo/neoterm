@@ -242,6 +242,25 @@ describe("a interface", () => {
     setScript({});
   });
 
+  it("desenha só as últimas mensagens; rolando até o topo, entram as anteriores", async () => {
+    for (let at = 0; at < 18; at++) await t.neoterm.chat("analista", `antiga ${at}`);
+    await press(KEY.escape);
+    await press(KEY.down, KEY.enter);
+    await press(KEY.escape);
+    await press(KEY.up, KEY.enter);
+    await seen("eco: antiga 17");
+    // A primeira pergunta da conversa não está desenhada; rolando até o topo, entra.
+    assert.doesNotMatch(frame(), /quanto entrou hoje/);
+    for (let step = 0; step < 400 && !frame().includes("┃ quanto entrou hoje?"); step++) {
+      ui.stdin.write(KEY.up);
+      if (step % 20 === 0) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await seen("┃ quanto entrou hoje?", 15_000);
+    assert.doesNotMatch(frame(), /mensagens anteriores/);
+    for (let step = 0; step < 400; step++) ui.stdin.write(KEY.down);
+    await seen("eco: antiga 17");
+  });
+
   it(":path abre o navegador de arquivos do escopo e põe o caminho escolhido no input", async () => {
     const root = (await t.neoterm.state()).agents.find((agent) => agent.slug === "analista")!.folders[0]!;
     mkdirSync(join(root, "docs", "contratos"), { recursive: true });
