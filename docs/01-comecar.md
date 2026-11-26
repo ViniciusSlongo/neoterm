@@ -4,7 +4,7 @@
 
 ## Instalar
 
-Precisa de macOS, Node 24+ e o [Claude Code](https://code.claude.com) logado (`claude`, depois `/login`).
+Precisa de macOS, Node 24+ e o Claude Code.
 
 ```sh
 git clone https://github.com/ViniciusSlongo/neoterm.git
@@ -14,10 +14,12 @@ cd neoterm && npm install && npm link
 ## Ligar
 
 ```sh
-neoterm init            # prepara ~/.neoterm e testa o Claude Code
+neoterm init            # conecta o provedor e prepara ~/.neoterm
 neoterm service on      # liga o motor (e sempre que você entrar no Mac)
 neoterm                 # abre a interface
 ```
+
+O `init` usa o login que já existe. Sem login, ele abre o login do próprio provedor.
 
 O motor roda os agentes. Fechar a interface não para nada.
 

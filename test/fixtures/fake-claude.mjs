@@ -22,6 +22,25 @@ const option = (name) => {
   const index = argv.indexOf(name);
   return index === -1 ? undefined : argv[index + 1];
 };
+// `claude auth status|login`: o login fica num arquivo em FAKE_CLAUDE_STATE (FAKE_LOGGED_OUT=1 começa sem).
+if (argv[0] === "auth") {
+  const { existsSync: exists, mkdirSync: mkdir, writeFileSync: write } = await import("node:fs");
+  const { join: joinPath } = await import("node:path");
+  const dir = process.env.FAKE_CLAUDE_STATE ?? ".fake-claude";
+  const flag = joinPath(dir, "logged-in");
+  const loggedIn = exists(flag) || process.env.FAKE_LOGGED_OUT !== "1";
+  if (argv[1] === "status") {
+    process.stdout.write(JSON.stringify(loggedIn ? { loggedIn: true, authMethod: "claude.ai", subscriptionType: "pro", email: "x@y.z" } : { loggedIn: false }));
+    process.exit(loggedIn ? 0 : 1);
+  }
+  if (argv[1] === "login") {
+    mkdir(dir, { recursive: true });
+    write(flag, "1");
+    process.stdout.write("Login successful.\n");
+    process.exit(0);
+  }
+}
+
 // `claude mcp list`: as integrações como o Claude Code mostraria (FAKE_MCP_LIST, ou um exemplo).
 if (argv[0] === "mcp" && argv[1] === "list") {
   process.stdout.write(

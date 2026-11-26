@@ -32,6 +32,8 @@ const Settings = z.object({
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/)
     .optional(),
+  /** O provedor que roda os agentes (src/providers.ts). */
+  provider: z.string().min(1).optional(),
   /** As notas ficam abertas ao lado da conversa, acompanhando o agente aberto. */
   notesPinned: z.boolean().optional(),
 });

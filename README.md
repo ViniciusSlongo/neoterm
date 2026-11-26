@@ -18,7 +18,7 @@
 
 ## Instalar
 
-Precisa de macOS, Node 24+ e o [Claude Code](https://code.claude.com) logado.
+Precisa de macOS, Node 24+ e o Claude Code. O `neoterm init` usa o login dele ou abre o login.
 
 ```sh
 git clone https://github.com/ViniciusSlongo/neoterm.git
