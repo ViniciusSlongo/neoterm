@@ -417,7 +417,7 @@ describe("a interface", () => {
     setScript({});
   });
 
-  it(":processos mostra o que o agente deixou rodando e encerra com x confirmado", async () => {
+  it(":processes mostra o que o agente deixou rodando e encerra com x confirmado", async () => {
     setScript({ analista: "!servico 60000" });
     await type("sobe um servidor");
     await press(KEY.enter);
@@ -426,7 +426,7 @@ describe("a interface", () => {
     setScript({});
     // A memória e o serviço aparecem no cabeçalho.
     await seen(/◆ 1 serviço/, 10_000);
-    await type(":processos");
+    await type(":processes");
     await press(KEY.enter);
     await seen(/processos · analista/);
     await seen("deixado rodando");
@@ -447,17 +447,17 @@ describe("a interface", () => {
     await seen("mensagem para analista");
   });
 
-  it(":ajuda abre a tela de ajuda; os comandos aceitam : e /", async () => {
-    await type(":ajuda");
+  it(":help abre a tela de ajuda; os comandos aceitam : e /", async () => {
+    await type(":help");
     await press(KEY.enter);
     await seen(/ajuda .*esc volta/);
-    await seen(":notas");
+    await seen(":notes");
     // As teclas vêm depois dos comandos; numa tela baixa, rolando.
     for (let step = 0; step < 10; step++) ui.stdin.write("j");
     await seen("TECLAS · CONVERSA");
     await press(KEY.escape);
     await seen("mensagem para analista");
-    // /ps é o mesmo que :processos.
+    // /ps é o mesmo que :processes.
     await type("/ps");
     await press(KEY.enter);
     await seen(/processos · analista/);
@@ -567,25 +567,25 @@ describe("a interface", () => {
   it(": abre o menu dos comandos, que afunila; enter roda, tab completa, esc fecha e deixa o :", async () => {
     await type(":");
     await seen("enter roda · tab completa · esc fecha");
-    await seen(/:ajuda\s+esta tela: comandos e teclas/);
-    // Afunila: "proc" deixa só o :processos, com o resumo ao lado.
+    await seen(/:help\s+esta tela: comandos e teclas/);
+    // Afunila: "proc" deixa só o :processes, com o resumo ao lado.
     await type("proc");
-    await seen(/:processos\s+memória e serviços/);
-    assert.doesNotMatch(frame(), /:ajuda\s+esta tela/);
+    await seen(/:processes\s+memória e serviços/);
+    assert.doesNotMatch(frame(), /:help\s+esta tela/);
     await press(KEY.enter);
     await seen(/processos · analista/);
     await press(KEY.escape);
     await seen("mensagem para analista");
     // Com complemento: escreve o comando e espera o nível.
-    await type(":esf");
+    await type(":eff");
     await press(KEY.enter);
-    await seen("> :esforço");
+    await seen("> :effort");
     assert.doesNotMatch(frame(), /enter roda/);
     await clearInput();
     // tab completa sem rodar.
-    await type(":pai");
+    await type(":da");
     await press(KEY.tab);
-    await seen("> :painel");
+    await seen("> :dashboard");
     await clearInput();
     // esc fecha o menu e o ":" fica como texto.
     await type(":");
@@ -598,7 +598,7 @@ describe("a interface", () => {
     await seen("┃ :)");
   });
 
-  it(":ver abre arquivos: os que o agente mexeu ficam no topo; abre em tela cheia, rola, busca e recarrega sozinho", async () => {
+  it(":open abre arquivos: os que o agente mexeu ficam no topo; abre em tela cheia, rola, busca e recarrega sozinho", async () => {
     const root = (await t.neoterm.state()).agents.find((agent) => agent.slug === "analista")!.folders[0]!;
     const path = join(root, "codigo.ts");
     writeFileSync(path, Array.from({ length: 60 }, (_, at) => `export const valor${at} = ${at}; // linha ${at + 1}`).join("\n"));
@@ -607,7 +607,7 @@ describe("a interface", () => {
     await press(KEY.enter);
     await seen("● li o código");
     setScript({});
-    await type(":ver");
+    await type(":open");
     await press(KEY.enter);
     await seen("ABRIR");
     await seen(/▌\s+codigo\.ts/);
@@ -635,12 +635,29 @@ describe("a interface", () => {
     await press(KEY.escape);
     await waitFor(() => !frame().includes("ABRIR"));
     await seen("mensagem para analista");
-    // :ver caminho abre direto; esc volta para a conversa.
-    await type(":ver codigo.ts");
+    // :open caminho abre direto; esc volta para a conversa.
+    await type(":open codigo.ts");
     await press(KEY.enter);
     await seen(/codigo\.ts .*TypeScript · 1 linha/);
     await press(KEY.escape);
     await seen("mensagem para analista");
+  });
+
+  it(":effort mostra e muda o esforço do agente, que aparece no cabeçalho", async () => {
+    await type(":effort");
+    await press(KEY.enter);
+    await seen("esforço de analista: padrão");
+    await type(":effort xhigh");
+    await press(KEY.enter);
+    await seen("esforço de analista: muito alto");
+    await waitFor(async () => (await t.api<{ agent: { effort?: string } }>("/agents/analista")).body.agent.effort === "xhigh");
+    await seen("esforço muito alto");
+    await type(":effort alto");
+    await press(KEY.enter);
+    await seen("esforço: low, medium, high, xhigh, max ou default");
+    await type(":effort default");
+    await press(KEY.enter);
+    await waitFor(async () => (await t.api<{ agent: { effort?: string } }>("/agents/analista")).body.agent.effort === undefined);
   });
 
   it("troca de agente pela lateral", async () => {
@@ -837,10 +854,10 @@ describe("a interface", () => {
     assert.equal(group?.folder, realpathSync(join(OPENED_IN, "docs")));
   });
 
-  it("edita um grupo com :editar e exclui grupo e agente com ctrl+d confirmado", async () => {
+  it("edita um grupo com :edit e exclui grupo e agente com ctrl+d confirmado", async () => {
     // Logo depois de criado, a conversa aberta é a do #revisao.
     await seen("mensagem para o grupo");
-    await type(":editar");
+    await type(":edit");
     await press(KEY.enter);
     await seen("editar #revisao");
     await seen(/Pasta\s+✓ .*docs/);
@@ -854,7 +871,7 @@ describe("a interface", () => {
     assert.deepEqual((await t.neoterm.state()).groups.find((group) => group.slug === "revisao")?.members.toSorted(), ["analista", "dev"]);
 
     // ctrl+d pede confirmação; outra tecla desiste.
-    await type(":editar");
+    await type(":edit");
     await press(KEY.enter);
     await seen("editar #revisao");
     await press("\x04");

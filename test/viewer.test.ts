@@ -123,10 +123,11 @@ describe("visualizador: arquivos à mão e o comando", () => {
     );
   });
 
-  it(":ver sozinho abre a lista; com caminho, o arquivo", () => {
-    assert.deepEqual(parseViewCommand(":ver"), { path: null });
-    assert.deepEqual(parseViewCommand("/abrir src/app.ts"), { path: "src/app.ts" });
-    assert.deepEqual(parseViewCommand(':ver "pasta com espaço/a.ts"'), { path: "pasta com espaço/a.ts" });
-    assert.equal(parseViewCommand(":verificar"), null);
+  it(":open sozinho abre a lista; com caminho, o arquivo", () => {
+    assert.deepEqual(parseViewCommand(":open"), { path: null });
+    assert.deepEqual(parseViewCommand("/view src/app.ts"), { path: "src/app.ts" });
+    assert.deepEqual(parseViewCommand(':open "pasta com espaço/a.ts"'), { path: "pasta com espaço/a.ts" });
+    assert.equal(parseViewCommand(":opener"), null);
+    assert.equal(parseViewCommand(":ver"), null);
   });
 });

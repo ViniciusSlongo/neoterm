@@ -17,19 +17,19 @@ Também dá para escrever o comando inteiro, com `:` ou `/` na frente.
 
 | Comando | Apelidos | O que faz |
 | --- | --- | --- |
-| `:ajuda` | `:help`, `:?` | comandos e teclas |
-| `:notas` | `:notes` | notas do agente |
-| `:path` | `:arquivo` | insere o caminho de um arquivo |
-| `:ver` | `:abrir`, `:view`, `:open` | abre um arquivo para ler (`:ver src/app.ts` abre direto) |
-| `:processos` | `:ps` | memória e serviços do agente |
-| `:editar` | `:edit` | edita ou exclui o agente ou grupo |
-| `:esforço` | `:esforco`, `:effort` | mostra ou muda o esforço: `:esforço alto` |
-| `:rotinas` | `:routines` | rotinas da conversa |
-| `:pausar` | `:pause` | pausa rotinas e retornos do agente |
-| `:retomar` | `:resume` | volta a rodar |
-| `:painel` | `:dash` | painel |
-| `:mcp` | `:integracoes` | integrações |
-| `:config` | `:cor`, `:tema` | cor e modelo padrão |
+| `:help` | `:?` | comandos e teclas |
+| `:notes` | | notas do agente |
+| `:path` | | insere o caminho de um arquivo |
+| `:open` | `:view` | abre um arquivo para ler (`:open src/app.ts` abre direto) |
+| `:processes` | `:ps` | memória e serviços do agente |
+| `:edit` | | edita ou exclui o agente ou grupo |
+| `:effort` | | mostra ou muda o esforço: `:effort high` (`low`, `medium`, `high`, `xhigh`, `max`, `default`) |
+| `:routines` | | rotinas da conversa |
+| `:pause` | | pausa rotinas e retornos do agente |
+| `:resume` | | volta a rodar |
+| `:dashboard` | `:dash` | painel |
+| `:mcp` | | integrações |
+| `:config` | `:settings` | cor e modelo padrão |
 
 ## Conversa
 
@@ -77,7 +77,7 @@ Também dá para escrever o comando inteiro, com `:` ou `/` na frente.
 | `.` | mostra ocultos |
 | `esc` | fecha |
 
-## Arquivo aberto (`:ver`)
+## Arquivo aberto (`:open`)
 
 | Tecla | O que faz |
 | --- | --- |

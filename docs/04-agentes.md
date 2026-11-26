@@ -7,10 +7,10 @@
 | O quê | Como |
 | --- | --- |
 | Criar | `n` na lateral |
-| Editar título, função, pastas, modelo, esforço | `e` na lateral ou `:editar` |
+| Editar título, função, pastas, modelo, esforço | `e` na lateral ou `:edit` |
 | Excluir | na edição, `ctrl+d` duas vezes (vai para `~/.neoterm/trash`) |
 | Recomeçar do zero | `neoterm agent reset <nome>` |
-| Pausar rotinas e retornos | `p` na lateral ou `:pausar` |
+| Pausar rotinas e retornos | `p` na lateral ou `:pause` |
 
 Cada agente é uma pasta em `~/.neoterm/agents/<nome>/`:
 
@@ -41,12 +41,13 @@ O agente trabalha nas pastas escolhidas e roda na primeira.
 
 ## Esforço
 
-Quanto o agente raciocina antes de responder: baixo, médio, alto, muito alto ou máximo.
+Quanto o agente raciocina antes de responder: baixo (`low`), médio (`medium`), alto (`high`), muito
+alto (`xhigh`) ou máximo (`max`).
 
 | Onde | Como |
 | --- | --- |
 | Formulário | campo **Esforço**, `←→` |
-| Conversa | `:esforço alto` (`:esforço` mostra o atual) |
+| Conversa | `:effort high` (`:effort` mostra o atual) |
 | Terminal | `neoterm agent new … --effort high` |
 
 ## Contexto
@@ -69,7 +70,7 @@ Peça na conversa: "pergunta ao dev onde está a planilha". O agente consulta o 
 
 | O quê | Como |
 | --- | --- |
-| Ver memória e serviços | cabeçalho da conversa, ou `:processos` |
+| Ver memória e serviços | cabeçalho da conversa, ou `:processes` |
 | Encerrar um | `x` na tela de processos |
 | Encerrar todos | `X` |
 

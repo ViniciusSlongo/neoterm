@@ -70,13 +70,14 @@ describe("esforço do agente", async () => {
     await assert.rejects(loadAgent("pensador"), /effort precisa ser um destes/);
   });
 
-  it(":esforço entende os nomes em português", () => {
-    assert.deepEqual(parseEffortCommand(":esforço"), { level: null });
-    assert.deepEqual(parseEffortCommand(":esforço alto"), { level: "high" });
-    assert.deepEqual(parseEffortCommand("/esforco Muito Alto"), { level: "xhigh" });
-    assert.deepEqual(parseEffortCommand(":effort máximo"), { level: "max" });
-    assert.deepEqual(parseEffortCommand(":esforço padrão"), { level: "" });
-    assert.deepEqual(parseEffortCommand(":esforço enorme"), { level: "?" });
-    assert.equal(parseEffortCommand("esforço alto"), null);
+  it(":effort entende os níveis do Claude Code e default", () => {
+    assert.deepEqual(parseEffortCommand(":effort"), { level: null });
+    assert.deepEqual(parseEffortCommand(":effort high"), { level: "high" });
+    assert.deepEqual(parseEffortCommand("/effort XHIGH"), { level: "xhigh" });
+    assert.deepEqual(parseEffortCommand(":effort max"), { level: "max" });
+    assert.deepEqual(parseEffortCommand(":effort default"), { level: "" });
+    assert.deepEqual(parseEffortCommand(":effort alto"), { level: "?" });
+    assert.equal(parseEffortCommand("effort high"), null);
+    assert.equal(parseEffortCommand(":esforço alto"), null);
   });
 });

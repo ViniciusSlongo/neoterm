@@ -7,7 +7,7 @@
 | Criar | `g` na lateral: pasta, membros, objetivo |
 | Falar com o coordenador | escreva sem `@` (o primeiro membro responde) |
 | Chamar um agente | `@nome` |
-| Editar pasta, membros, objetivo | `e` na lateral ou `:editar` |
+| Editar pasta, membros, objetivo | `e` na lateral ou `:edit` |
 | Excluir | na edição, `ctrl+d` duas vezes |
 
 Os agentes chamam uns aos outros com `@nome`. Com `@você`, o grupo para e te chama. Depois de 30

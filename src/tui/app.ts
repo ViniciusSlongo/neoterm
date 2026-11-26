@@ -51,7 +51,7 @@ type Mode = "chat" | "routines" | "form" | "attention" | "processes" | "help" | 
 type Live = { agent: string; parts: MessagePart[] };
 /**
  * A lista de arquivos à direita: a da conversa de onde abriu, com a pasta onde o agente roda.
- * `insert` (o :path) põe o caminho na mensagem; `open` (o :ver) abre o arquivo no visualizador.
+ * `insert` (o :path) põe o caminho na mensagem; `open` (o :open) abre o arquivo no visualizador.
  */
 type Picker = { scope: string; workspace: string; browser: Browser; purpose: "insert" | "open" };
 /** O arquivo aberto no visualizador; `returnTo`: de onde veio (a lista de arquivos ou a conversa). */
@@ -866,7 +866,7 @@ export function App({
     const text = override ?? expandImages(draft.text, images.current).trim();
     if (!text || !scope) return;
     clearDraft();
-    // :ver abre a lista de arquivos; :ver caminho abre o arquivo direto.
+    // :open abre a lista de arquivos; :open caminho abre o arquivo direto.
     const viewCommand = parseViewCommand(text);
     if (viewCommand) {
       if (!viewCommand.path) return openPicker("open");
@@ -874,48 +874,48 @@ export function App({
       if (!workspace) return say("esta conversa não tem pastas");
       return openViewer(absolutePath(viewCommand.path, workspace), workspace, "main");
     }
-    // :esforço [nível]: sem nível, diz o atual; com nível, muda o do agente.
+    // :effort [nível]: sem nível, diz o atual; com nível, muda o do agente.
     const effortCommand = parseEffortCommand(text);
     if (effortCommand) {
       if (scope.kind !== "agent") return say("o esforço é de cada agente: abra a conversa com um");
       const current = agentState?.effort;
       if (effortCommand.level === null) {
-        return say(`esforço de ${scope.slug}: ${current ? EFFORT_LABEL[current] : "padrão"} · mude com :esforço baixo | médio | alto | muito alto | máximo | padrão`);
+        return say(`esforço de ${scope.slug}: ${current ? EFFORT_LABEL[current] : "padrão"} · mude com :effort low | medium | high | xhigh | max | default`);
       }
-      if (effortCommand.level === "?") return say("esforço: baixo, médio, alto, muito alto, máximo ou padrão");
+      if (effortCommand.level === "?") return say("esforço: low, medium, high, xhigh, max ou default");
       const level = effortCommand.level;
       return run(
         api.updateAgent(scope.slug, { effort: level || null }),
         `esforço de ${scope.slug}: ${level ? EFFORT_LABEL[level] : "padrão"} · vale a partir da próxima resposta`,
       );
     }
-    // Comandos: com : ou / na frente (:notas, /notas).
+    // Comandos: com : ou / na frente (:notes, /notes).
     switch (parseCommand(text)) {
-      case "ajuda":
+      case "help":
         return openHelp();
-      case "rotinas":
+      case "routines":
         return openRoutines();
-      case "processos":
+      case "processes":
         return openProcesses();
-      case "painel":
+      case "dashboard":
         return openDashboard();
       case "mcp":
         return openIntegrations();
       case "config":
         return openConfig();
-      case "editar":
+      case "edit":
         return openEditForm(scope);
       case "path":
         return openPicker();
-      case "ver":
+      case "open":
         return openPicker("open");
-      case "notas":
+      case "notes":
         if (scope.kind !== "agent") return say("as notas são de cada agente: abra a conversa com um");
         return openNotes(scope.slug);
-      case "pausar":
-      case "retomar": {
+      case "pause":
+      case "resume": {
         if (scope.kind !== "agent") return say("só agentes pausam");
-        const pause = parseCommand(text) === "pausar";
+        const pause = parseCommand(text) === "pause";
         return run(api.setPaused(scope.slug, pause), pause ? `${scope.slug} pausado` : `${scope.slug} retomado`);
       }
       case null:
@@ -1109,8 +1109,11 @@ export function App({
   }, [draft.text]);
   const chooseCommand = (command: Command | undefined) => {
     if (!command) return;
-    // Com complemento (o nível do esforço): escreve o comando e espera o resto.
-    if (command.argument) return setDraft({ text: `:${command.name} `, cursor: [...`:${command.name} `].length });
+    // Com complemento (o nível do esforço): completa o nome e espera o resto. Com o nome já inteiro
+    // (":effort"), roda sem o complemento, que mostra o valor atual.
+    if (command.argument && draft.text !== `:${command.name}`) {
+      return setDraft({ text: `:${command.name} `, cursor: [...`:${command.name} `].length });
+    }
     send(`:${command.name}`);
   };
   const handleCommandMenu = (input: string, key: InkKey): boolean => {
@@ -1318,7 +1321,7 @@ export function App({
     if (pickerRef.current?.scope === currentKey && pickerRef.current.purpose === purpose) return setFocus("files");
     const roots = scopeRoots();
     if (roots.length === 0) return say("esta conversa não tem pastas");
-    // No :ver, os arquivos que o agente leu ou mexeu nesta conversa ficam à mão, no topo.
+    // No :open, os arquivos que o agente leu ou mexeu nesta conversa ficam à mão, no topo.
     const pinned = purpose === "open" ? recentFiles(fileToolDetails(), roots[0]!) : [];
     const browser = newBrowser(roots, { pinned });
     setPicker({ scope: currentKey, workspace: roots[0]!, browser, purpose });
@@ -1372,7 +1375,7 @@ export function App({
     if (action.type === "close") return closePicker();
   };
 
-  // ---------- visualizador de arquivos (:ver) ----------
+  // ---------- visualizador de arquivos (:open) ----------
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [viewerView, setViewerView] = useState<ViewerView>(NEW_VIEW);
   // As cores chegam em partes e preenchem o arquivo aberto; isto só pede o redesenho.
@@ -1550,7 +1553,7 @@ export function App({
     const prompt = (first: boolean) => h(Text, { color: typing ? theme.accent : theme.muted, bold: true }, first ? "> " : "  ");
     let lines: ReactNode[];
     if (!draft.text) {
-      const hint = scope?.kind === "group" ? "mensagem para o grupo · @nome chama um agente" : `mensagem para ${scope?.slug} · :ajuda`;
+      const hint = scope?.kind === "group" ? "mensagem para o grupo · @nome chama um agente" : `mensagem para ${scope?.slug} · :help`;
       lines = [
         h(Text, { key: "hint", wrap: "truncate-end" }, prompt(true), typing ? h(Text, { inverse: true }, " ") : null, h(Text, { color: theme.muted }, hint)),
       ];
@@ -2058,7 +2061,7 @@ export function App({
   else if (mode === "processes") hints = confirmStop ? `${confirmStop === "all" ? "X" : "x"} de novo encerra · qualquer outra tecla desiste` : "↑↓ escolhe · x encerra · X encerra todos · enter detalhe · esc volta";
   else if (mode === "routines") hints = "↑↓ escolhe · n nova · espaço liga/desliga · x roda agora · d apaga · esc volta";
   else if (mode === "attention") hints = "esc volta para a lateral";
-  else hints = `enter envia · ctrl+n notas · esc lateral · :ajuda`;
+  else hints = `enter envia · ctrl+n notas · esc lateral · :help`;
   const usage = state?.planUsage;
   const plan = usage
     ? ` · plano${usage.fiveHour ? ` ${Math.round(usage.fiveHour.utilization * 100)}%` : ""}${usage.sevenDay ? ` · semana ${Math.round(usage.sevenDay.utilization * 100)}%` : ""}`

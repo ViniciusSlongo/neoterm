@@ -114,7 +114,7 @@ export async function docsCommand(args: string[]): Promise<number> {
       "",
       ...docs.map((doc) => `  ${muted(String(doc.number).padStart(2))}  ${accent(doc.name.padEnd(width))}  ${(doc.summary || doc.title).replace(/`/g, "")}`),
       "",
-      muted(`  na interface: :ajuda · arquivos em ${DOCS_DIR}`),
+      muted(`  na interface: :help · arquivos em ${DOCS_DIR}`),
     ];
     console.log(lines.join("\n"));
     return 0;

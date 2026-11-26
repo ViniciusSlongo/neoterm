@@ -4,17 +4,20 @@ import { COMMANDS, parseCommand } from "../src/tui/commands.ts";
 
 describe("comandos da conversa", () => {
   it("aceitam : e /, e os apelidos", () => {
-    assert.equal(parseCommand(":notas"), "notas");
-    assert.equal(parseCommand("/notes"), "notas");
-    assert.equal(parseCommand(":ps"), "processos");
-    assert.equal(parseCommand("/rotinas"), "rotinas");
-    assert.equal(parseCommand(":?"), "ajuda");
-    assert.equal(parseCommand("  :AJUDA  "), "ajuda");
+    assert.equal(parseCommand(":notes"), "notes");
+    assert.equal(parseCommand("/notes"), "notes");
+    assert.equal(parseCommand(":ps"), "processes");
+    assert.equal(parseCommand("/routines"), "routines");
+    assert.equal(parseCommand(":?"), "help");
+    assert.equal(parseCommand("  :HELP  "), "help");
+    assert.equal(parseCommand(":dash"), "dashboard");
   });
 
   it("o resto é mensagem", () => {
-    assert.equal(parseCommand("notas"), null);
-    assert.equal(parseCommand(":notas do cliente"), null);
+    assert.equal(parseCommand("notes"), null);
+    assert.equal(parseCommand(":notes do cliente"), null);
+    // Os nomes em português saíram.
+    for (const old of [":notas", ":ajuda", ":editar", ":ver", ":rotinas", ":painel", ":esforço"]) assert.equal(parseCommand(old), null, old);
     assert.equal(parseCommand(":inexistente"), null);
     assert.equal(parseCommand("http://exemplo.com"), null);
   });
@@ -44,16 +47,16 @@ describe("menu dos comandos", async () => {
   const names = (query: string, agent = true) => matchCommands(query, { agent }).map((command) => command.name);
   it("afunila pelo começo do nome ou de um apelido, depois pelo que contém", () => {
     assert.equal(names("").length, COMMANDS.length);
-    assert.deepEqual(names("not"), ["notas"]);
-    assert.deepEqual(names("ps"), ["processos"]);
-    assert.deepEqual(names("esfor"), ["esforço"]);
-    assert.ok(names("a")[0] === "ajuda");
+    assert.deepEqual(names("not"), ["notes"]);
+    assert.deepEqual(names("ps"), ["processes"]);
+    assert.deepEqual(names("eff"), ["effort"]);
+    assert.ok(names("h")[0] === "help");
     assert.deepEqual(names("xyz"), []);
-    assert.deepEqual(names("e"), ["editar", "esforço"]);
-    assert.deepEqual(names("cesso"), ["processos"]);
+    assert.deepEqual(names("e"), ["edit", "effort"]);
+    assert.deepEqual(names("cess"), ["processes"]);
   });
   it("num grupo, esconde os comandos só de agente", () => {
-    assert.ok(!names("", false).includes("notas"));
-    assert.ok(names("", false).includes("editar"));
+    assert.ok(!names("", false).includes("notes"));
+    assert.ok(names("", false).includes("edit"));
   });
 });

@@ -44,19 +44,19 @@ Salvam sozinhas em `~/.neoterm/agents/<nome>/notas.txt`. O agente não as vê.
 
 | Tela | Abre com | Mostra |
 | --- | --- | --- |
-| Painel | `d`, `:painel` | motor, máquina, plano, trabalho do dia, agentes |
+| Painel | `d`, `:dashboard` | motor, máquina, plano, trabalho do dia, agentes |
 | Integrações | `i`, `:mcp` | MCPs do Claude Code |
 | Config | `c`, `:config` | cor da interface, modelo padrão |
-| Processos | `s`, `:processos` | memória e serviços do agente; `x` encerra |
-| Rotinas | `r`, `:rotinas` | rotinas da conversa |
-| Ajuda | `?`, `:ajuda` | comandos e teclas |
-| Arquivo | `:ver` | o conteúdo em tela cheia, com as cores do código (tema Dark+) |
+| Processos | `s`, `:processes` | memória e serviços do agente; `x` encerra |
+| Rotinas | `r`, `:routines` | rotinas da conversa |
+| Ajuda | `?`, `:help` | comandos e teclas |
+| Arquivo | `:open` | o conteúdo em tela cheia, com as cores do código (tema Dark+) |
 
 ## Arquivos
 
-`:ver` abre a lista de arquivos da conversa. No topo ficam os que o agente leu ou mexeu; `enter`
+`:open` abre a lista de arquivos da conversa. No topo ficam os que o agente leu ou mexeu; `enter`
 abre em tela cheia, com números de linha e as cores do código. Se o arquivo mudar enquanto está
-aberto, ele recarrega sozinho. `:ver src/app.ts` abre direto.
+aberto, ele recarrega sozinho. `:open src/app.ts` abre direto.
 
 ## Formulários
 

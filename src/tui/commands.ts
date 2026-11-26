@@ -1,9 +1,22 @@
 /*
  * Os comandos da conversa, num lugar só: quem interpreta o que foi digitado, a tela de ajuda e os
- * docs leem daqui. Funcionam com ":" ou "/" na frente (:notas e /notas são o mesmo).
+ * docs leem daqui. Funcionam com ":" ou "/" na frente (:notes e /notes são o mesmo).
  */
 
-export type CommandName = "ver" | "esforço" | "config" | "ajuda" | "notas" | "path" | "processos" | "editar" | "rotinas" | "pausar" | "retomar" | "painel" | "mcp";
+export type CommandName =
+  | "help"
+  | "notes"
+  | "path"
+  | "open"
+  | "processes"
+  | "edit"
+  | "routines"
+  | "pause"
+  | "resume"
+  | "dashboard"
+  | "mcp"
+  | "config"
+  | "effort";
 
 export type Command = {
   name: CommandName;
@@ -17,24 +30,24 @@ export type Command = {
 };
 
 export const COMMANDS: Command[] = [
-  { name: "ajuda", aliases: ["help", "?"], description: "esta tela: comandos e teclas" },
-  { name: "notas", aliases: ["notes"], description: "suas anotações sobre o agente, à direita", agentOnly: true },
-  { name: "path", aliases: ["arquivo"], description: "escolhe um arquivo do escopo e põe o caminho na mensagem" },
-  { name: "ver", aliases: ["abrir", "view", "open"], description: "abre um arquivo para ler, com as cores do código" },
-  { name: "processos", aliases: ["ps"], description: "memória e serviços que o agente deixou rodando", agentOnly: true },
-  { name: "editar", aliases: ["edit"], description: "muda (ou exclui) o agente ou o grupo" },
-  { name: "rotinas", aliases: ["routines"], description: "as rotinas desta conversa" },
-  { name: "pausar", aliases: ["pause"], description: "pausa as rotinas e retornos do agente", agentOnly: true },
-  { name: "retomar", aliases: ["resume"], description: "volta a rodar o que foi pausado", agentOnly: true },
-  { name: "painel", aliases: ["dash"], description: "resumo do neoterm: motor, plano, agentes" },
-  { name: "mcp", aliases: ["integracoes", "integrações"], description: "integrações do Claude Code (só ver)" },
-  { name: "config", aliases: ["cor", "tema"], description: "cor da interface e modelo padrão dos agentes" },
+  { name: "help", aliases: ["?"], description: "esta tela: comandos e teclas" },
+  { name: "notes", aliases: [], description: "suas anotações sobre o agente, à direita", agentOnly: true },
+  { name: "path", aliases: [], description: "escolhe um arquivo do escopo e põe o caminho na mensagem" },
+  { name: "open", aliases: ["view"], description: "abre um arquivo para ler, com as cores do código" },
+  { name: "processes", aliases: ["ps"], description: "memória e serviços que o agente deixou rodando", agentOnly: true },
+  { name: "edit", aliases: [], description: "muda (ou exclui) o agente ou o grupo" },
+  { name: "routines", aliases: [], description: "as rotinas desta conversa" },
+  { name: "pause", aliases: [], description: "pausa as rotinas e retornos do agente", agentOnly: true },
+  { name: "resume", aliases: [], description: "volta a rodar o que foi pausado", agentOnly: true },
+  { name: "dashboard", aliases: ["dash"], description: "resumo do neoterm: motor, plano, agentes" },
+  { name: "mcp", aliases: [], description: "integrações do Claude Code (só ver)" },
+  { name: "config", aliases: ["settings"], description: "cor da interface e modelo padrão dos agentes" },
   {
-    name: "esforço",
-    aliases: ["esforco", "effort"],
-    description: "esforço do agente: :esforço alto (baixo, médio, alto, muito alto, máximo, padrão)",
+    name: "effort",
+    aliases: [],
+    description: "esforço do agente: :effort high (low, medium, high, xhigh, max, default)",
     agentOnly: true,
-    argument: "baixo · médio · alto · muito alto · máximo · padrão",
+    argument: "low · medium · high · xhigh · max · default",
   },
 ];
 
@@ -55,7 +68,7 @@ export function matchCommands(query: string, options: { agent: boolean }): Comma
   return [...starts, ...contains];
 }
 
-/** O comando digitado (":notas", "/ps", ":?"), ou `null` se o texto é uma mensagem. */
+/** O comando digitado (":notes", "/ps", ":?"), ou `null` se o texto é uma mensagem. */
 export function parseCommand(text: string): CommandName | null {
   const match = /^[:/](\S+)$/.exec(text.trim());
   if (!match) return null;
@@ -63,34 +76,23 @@ export function parseCommand(text: string): CommandName | null {
   return COMMANDS.find((command) => command.name === word || command.aliases.includes(word))?.name ?? null;
 }
 
-/** O nível de esforço digitado (":esforço alto", "/effort max"): o valor do Claude Code, "" para o padrão, ou null. */
+/** Os níveis do `:effort`: os do Claude Code, e `default` para voltar ao padrão (""). */
+export const EFFORT_LEVELS: Record<string, string> = { low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max", default: "" };
+
+/** O nível digitado (":effort high", "/effort max"): o valor do Claude Code, "" para o padrão, "?" se não existe, ou null sem nível. */
 export function parseEffortCommand(text: string): { level: string | null } | null {
-  const match = /^[:/](esforço|esforco|effort)(?:\s+(.+))?$/i.exec(text.trim());
+  const match = /^[:/]effort(?:\s+(.+))?$/i.exec(text.trim());
   if (!match) return null;
-  if (!match[2]) return { level: null };
-  const fold = match[2].trim().normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, "-");
-  const names: Record<string, string> = {
-    padrao: "",
-    default: "",
-    baixo: "low",
-    low: "low",
-    medio: "medium",
-    medium: "medium",
-    alto: "high",
-    high: "high",
-    "muito-alto": "xhigh",
-    xhigh: "xhigh",
-    maximo: "max",
-    max: "max",
-  };
-  return { level: fold in names ? names[fold]! : "?" };
+  if (!match[1]) return { level: null };
+  const word = match[1].trim().toLowerCase();
+  return { level: word in EFFORT_LEVELS ? EFFORT_LEVELS[word]! : "?" };
 }
 
 export const EFFORT_LABEL: Record<string, string> = { low: "baixo", medium: "médio", high: "alto", xhigh: "muito alto", max: "máximo" };
 
-/** `:ver` sozinho abre a lista de arquivos; `:ver caminho` abre o arquivo direto. */
+/** `:open` sozinho abre a lista de arquivos; `:open caminho` abre o arquivo direto. */
 export function parseViewCommand(text: string): { path: string | null } | null {
-  const match = /^[:/](ver|abrir|view|open)(?:\s+(.+))?$/i.exec(text.trim());
+  const match = /^[:/](open|view)(?:\s+(.+))?$/i.exec(text.trim());
   if (!match) return null;
   const path = match[2]?.trim().replace(/^["']|["']$/g, "") ?? "";
   return { path: path || null };
@@ -143,7 +145,7 @@ export const KEYS: { where: string; keys: [string, string][] }[] = [
     ],
   },
   {
-    where: "arquivo aberto (:ver)",
+    where: "arquivo aberto (:open)",
     keys: [
       ["↑↓, pgup/pgdn", "rolam"],
       ["←→", "rolam de lado"],

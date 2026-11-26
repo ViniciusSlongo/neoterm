@@ -41,7 +41,7 @@ export function newAgentForm(api: NeotermApi, done: (slug: string) => void, cwd 
         value: "",
         cursor: 0,
         placeholder: "o que ele faz, em qualquer conversa",
-        hint: "enter quebra a linha · tab segue · dá para mudar depois com :editar",
+        hint: "enter quebra a linha · tab segue · dá para mudar depois com :edit",
       },
       {
         key: "folders",

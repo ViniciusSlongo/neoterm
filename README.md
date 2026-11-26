@@ -12,7 +12,7 @@
  ✓ 09:00 resumo        │    • 8 por pix · 4 por boleto
  PRECISA DE VOCÊ       │
  ! rotina backup falhou│ ──────────────────────────────────────────────────────────────
- ◆ painel            d │  > mensagem para analista · :ajuda
+ ◆ painel            d │  > mensagem para analista · :help
  ◆ integrações       i │ ──────────────────────────────────────────────────────────────
 ```
 
@@ -40,10 +40,10 @@ neoterm
 | Rotinas | "todo dia às 9h, …" na conversa, ou `r` |
 | Grupos | `g` cria; `@nome` chama um agente |
 | Consulta entre agentes | "pergunta ao dev …" na conversa |
-| Esforço por agente | `:esforço alto` |
+| Esforço por agente | `:effort high` |
 | Notas e tarefas | `ctrl+n`; `ctrl+t` cria tarefa |
-| Ver arquivos com as cores do código | `:ver` |
-| Processos e memória | `:processos` |
+| Ver arquivos com as cores do código | `:open` |
+| Processos e memória | `:processes` |
 | Painel | `d` |
 | Integrações (MCP) | `i` |
 | Cor e modelo padrão | `c` |
