@@ -21,6 +21,8 @@ export type ToolCaller = {
   groupId?: string;
   mode: RunMode;
   timeZone: string;
+  /** 1 quando a execução responde a uma consulta de outro agente: aí não consulta mais ninguém. */
+  depth?: number;
 };
 
 export type ToolDefinition = {

@@ -1,7 +1,7 @@
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { isValidSlug } from "../agents/identity.ts";
 import type { Database } from "../db/client.ts";
 import { agents, conversations, groupMembers, groups } from "../db/schema.ts";
@@ -138,6 +138,46 @@ export async function removeMember(db: Database, group: GroupDetail, agentId: st
       .set({ coordinator: true })
       .where(and(eq(groupMembers.groupId, group.id), eq(groupMembers.agentId, left[0]!.agent.id)));
   }
+}
+
+/**
+ * Muda um grupo: a pasta, o objetivo e os membros. Em `members`, a ordem conta: o primeiro coordena.
+ * Trocar a pasta zera as sessões do Claude Code dos membros (elas pertencem à pasta antiga); a
+ * conversa do grupo continua a mesma.
+ */
+export async function updateGroup(
+  db: Database,
+  slug: string,
+  patch: { folder?: string; objective?: string; members?: { agentId: string }[] },
+): Promise<GroupDetail> {
+  const group = await getGroup(db, slug);
+  const work = [];
+  if (patch.folder !== undefined) {
+    const folder = await realpath(expandFolder(patch.folder)).catch(() => {
+      throw new GroupProblem(`a pasta ${patch.folder} não existe`);
+    });
+    if (!(await stat(folder)).isDirectory()) throw new GroupProblem(`${folder} não é uma pasta`);
+    if (folder !== group.folder) {
+      work.push(db.update(groups).set({ folder }).where(eq(groups.id, group.id)));
+      work.push(db.update(groupMembers).set({ claudeSessionId: null }).where(eq(groupMembers.groupId, group.id)));
+    }
+  }
+  if (patch.objective !== undefined) work.push(db.update(groups).set({ objective: patch.objective.trim() }).where(eq(groups.id, group.id)));
+  if (patch.members !== undefined) {
+    const wanted = [...new Set(patch.members.map((member) => member.agentId))];
+    if (wanted.length === 0) throw new GroupProblem("um grupo precisa de pelo menos um agente");
+    const current = new Set(group.members.map((member) => member.agent.id));
+    const removed = [...current].filter((id) => !wanted.includes(id));
+    const added = wanted.filter((id) => !current.has(id));
+    if (removed.length) work.push(db.delete(groupMembers).where(and(eq(groupMembers.groupId, group.id), inArray(groupMembers.agentId, removed))));
+    if (added.length) work.push(db.insert(groupMembers).values(added.map((agentId) => ({ groupId: group.id, agentId }))));
+    // O primeiro da lista coordena; os outros, não.
+    work.push(db.update(groupMembers).set({ coordinator: false }).where(eq(groupMembers.groupId, group.id)));
+    work.push(db.update(groupMembers).set({ coordinator: true }).where(and(eq(groupMembers.groupId, group.id), eq(groupMembers.agentId, wanted[0]!))));
+  }
+  const [first, ...rest] = work;
+  if (first) await db.batch([first, ...rest]);
+  return getGroup(db, slug);
 }
 
 export async function markSeen(db: Database, groupId: string, agentId: string, until: Date): Promise<void> {

@@ -47,6 +47,11 @@ const clearInput = async () => {
   for (let step = 0; step < 12; step++) ui.stdin.write("\x15");
   await new Promise((resolve) => setTimeout(resolve, 50));
 };
+/** Apaga um campo de texto do formulário, um caractere por vez. */
+const clearField = async (length: number) => {
+  for (let step = 0; step < length; step++) ui.stdin.write("\x7f");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+};
 const seen = (pattern: RegExp | string, timeoutMs = 8000) =>
   waitFor(() => (typeof pattern === "string" ? frame().includes(pattern) : pattern.test(frame())), timeoutMs).catch(() => {
     throw new Error(`não apareceu na tela: ${pattern}\n---\n${frame()}`);
@@ -59,6 +64,8 @@ before(async () => {
   // A interface aberta numa pasta: um caminho relativo no formulário parte dela.
   OPENED_IN = makeFolder("aberto-aqui");
   makeFolder("aberto-aqui/codigo");
+  makeFolder("aberto-aqui/docs/contratos");
+  writeFileSync(join(OPENED_IN, "solto.txt"), "");
   ui = render(h(App, { api: httpApi(t.base), cwd: OPENED_IN, readClipboardImage: async () => clipboard }));
   await seen("AGENTES");
 });
@@ -101,15 +108,19 @@ describe("a interface", () => {
   });
 
   it("o que você manda enquanto ele responde fica embaixo, na fila, e o streaming não sai do lugar", async () => {
-    setScript({ analista: ["!ferramenta Read lento.csv\n!dormir 1500\nprimeira resposta", "segunda resposta"] });
+    setScript({ analista: ["!ferramenta Read lento.csv\n!dormir 1500\nprimeira resposta", "segunda resposta", "terceira resposta"] });
     await type("pergunta longa");
     await press(KEY.enter);
     await seen(/⎿ Read\s+lento\.csv/);
     await type("mais uma coisa");
     await press(KEY.enter);
-    await seen(/┃ pergunta longa[\s\S]*⎿ Read\s+lento\.csv[\s\S]*trabalhando…[\s\S]*┃ na fila[\s\S]*┃ mais uma coisa/);
-    await seen("● segunda resposta", 15_000);
-    assert.match(frame(), /● primeira resposta[\s\S]*┃ mais uma coisa[\s\S]*● segunda resposta/);
+    await type("e outra");
+    await press(KEY.enter);
+    // Uma fila só, com as mensagens numeradas.
+    await seen(/┃ pergunta longa[\s\S]*⎿ Read\s+lento\.csv[\s\S]*trabalhando…[\s\S]*┃ na fila\s*│?\s*\n.*┃ 1\. mais uma coisa\s*│?\s*\n.*┃ 2\. e outra/);
+    assert.equal(frame().match(/na fila/g)?.length, 1);
+    await seen("● terceira resposta", 15_000);
+    assert.match(frame(), /● primeira resposta[\s\S]*┃ mais uma coisa[\s\S]*● segunda resposta[\s\S]*┃ e outra[\s\S]*● terceira resposta/);
     assert.doesNotMatch(frame(), /na fila/);
     setScript({});
   });
@@ -164,9 +175,9 @@ describe("a interface", () => {
     await clearInput();
   });
 
-  it("ctrl+enter, option+enter e ctrl+j quebram a linha; enter envia tudo", async () => {
+  it("shift+enter, option+enter e ctrl+j quebram a linha; enter envia tudo", async () => {
     await type("um");
-    await press("\x1b[13;5u");
+    await press("\x1b[13;2u");
     await type("dois");
     await press("\x1b\r");
     await type("tres");
@@ -317,6 +328,125 @@ describe("a interface", () => {
     await press(KEY.escape);
   });
 
+  it("o painel abre com :dash e com d na lateral, e resume o neoterm", async () => {
+    await type(":dash");
+    await press(KEY.enter);
+    await seen(/painel .*atualizado/);
+    await seen("MOTOR");
+    await seen("MÁQUINA");
+    // j rola o painel até a tabela dos agentes, que fica abaixo da dobra numa tela pequena.
+    assert.doesNotMatch(frame(), /analista\s+livre/);
+    for (let step = 0; step < 30; step++) ui.stdin.write("j");
+    await seen(/analista\s+livre/);
+    // esc vai para a lateral; d abre de novo de qualquer item.
+    await press(KEY.escape);
+    await press(KEY.up);
+    await seen("mensagem para");
+    await type("d");
+    await seen("MOTOR");
+    // De volta à conversa: esc vai para a lateral e o topo dela é o primeiro agente.
+    await press(KEY.escape);
+    for (let step = 0; step < 12; step++) ui.stdin.write(KEY.up);
+    await seen(/▌○ analista/);
+    await press(KEY.enter);
+    await seen("mensagem para analista");
+  });
+
+  it(":mcp abre a tela de integrações, só para ver, sem tokens", async () => {
+    await type(":mcp");
+    await press(KEY.enter);
+    await seen(/integrações .*MCP, pelo Claude Code/);
+    await seen("CONECTADAS (1)");
+    await seen("Google Drive");
+    await seen("drivemcp.googleapis.com");
+    await seen("PRECISAM DE AUTENTICAÇÃO (1)");
+    await seen("ainda não usam estas integrações");
+    assert.doesNotMatch(frame(), /segredo/);
+    // De volta à conversa.
+    await press(KEY.escape);
+    for (let step = 0; step < 12; step++) ui.stdin.write(KEY.up);
+    await seen(/▌○ analista/);
+    await press(KEY.enter);
+    await seen("mensagem para analista");
+  });
+
+  it("desenha o markdown das respostas: negrito, código, títulos e listas, sem os símbolos", async () => {
+    setScript({ analista: "## Resumo\nIsto **não foi feito**: veja `src/app.ts`.\n- primeiro item\n```\nconst x = 1;\n```" });
+    await type("resume");
+    await press(KEY.enter);
+    await seen("Isto não foi feito: veja src/app.ts.");
+    assert.doesNotMatch(frame(), /\*\*não/);
+    assert.doesNotMatch(frame(), /## Resumo|```/);
+    assert.match(frame(), /Resumo/);
+    assert.match(frame(), /• primeiro item/);
+    assert.match(frame(), /const x = 1;/);
+    setScript({});
+  });
+
+  it(":processos mostra o que o agente deixou rodando e encerra com x confirmado", async () => {
+    setScript({ analista: "!servico 60000" });
+    await type("sobe um servidor");
+    await press(KEY.enter);
+    await seen(/● servico \d+/);
+    const pid = Number(/servico (\d+)/.exec(frame())?.[1]);
+    setScript({});
+    // A memória e o serviço aparecem no cabeçalho.
+    await seen(/◆ 1 serviço/, 10_000);
+    await type(":processos");
+    await press(KEY.enter);
+    await seen(/processos · analista/);
+    await seen("deixado rodando");
+    await press(KEY.down);
+    await type("x");
+    await seen("Aperte x de novo");
+    await type("x");
+    await waitFor(() => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    await seen("Nada rodando por este agente agora.");
+    await press(KEY.escape);
+    await seen("mensagem para analista");
+  });
+
+  it(":ajuda abre a tela de ajuda; os comandos aceitam : e /", async () => {
+    await type(":ajuda");
+    await press(KEY.enter);
+    await seen(/ajuda .*esc volta/);
+    await seen(":notas");
+    await seen("TECLAS · CONVERSA");
+    await press(KEY.escape);
+    await seen("mensagem para analista");
+    // /ps é o mesmo que :processos.
+    await type("/ps");
+    await press(KEY.enter);
+    await seen(/processos · analista/);
+    await press(KEY.escape);
+    await seen("mensagem para analista");
+  });
+
+  it("cancelar um formulário aberto pela lateral volta para a lateral", async () => {
+    await press(KEY.escape);
+    await type("n");
+    await seen("novo agente ·");
+    await press(KEY.escape);
+    await seen("g grupo · ? ajuda");
+    // A tecla seguinte é da lateral, não vai para o texto da mensagem.
+    await type("?");
+    await seen(/ajuda .*esc volta/);
+    await press(KEY.escape);
+    await seen("g grupo · ? ajuda");
+    for (let step = 0; step < 12; step++) ui.stdin.write(KEY.up);
+    await seen(/▌○ analista/);
+    await press(KEY.enter);
+    await seen("mensagem para analista");
+    assert.doesNotMatch(frame(), /> [n?]\s/);
+  });
+
   it("troca de agente com ↑↓ quando não há texto", async () => {
     await press(KEY.down);
     await seen(/dev\s+· Implementação/);
@@ -326,21 +456,59 @@ describe("a interface", () => {
 
   it("cria um agente pelo formulário", async () => {
     await press(KEY.escape);
-    await seen("n novo agente");
+    await seen("g grupo · ? ajuda");
     await type("n");
     await seen("novo agente");
     await type("revisor");
     await press(KEY.tab);
     await type("Revisão de código");
     await press(KEY.tab);
-    await type("Revisa o código antes de cada entrega.");
+    // Um texto longo colado na função não invade os outros campos: mostra o fim e o tamanho.
+    const role = `${Array.from({ length: 40 }, (_, n) => `Regra ${n + 1}: revisar com cuidado.`).join(" ")} Revisa o código antes de cada entrega.`;
+    await type(role);
+    await seen("caracteres · 1 linha");
+    await seen("antes de cada entrega.");
+    assert.doesNotMatch(frame(), /Regra 1:/);
+    await seen(/Pastas\s+nenhuma ainda/);
     await press(KEY.tab);
-    await type("codigo, ~");
+    // O campo de pastas abre a lista ao lado, na pasta de onde a interface foi aberta, só com pastas.
+    await seen("PASTAS");
+    await seen("▸ codigo/");
+    await seen("▸ docs/");
+    assert.doesNotMatch(frame(), /solto\.txt/);
+    // Salvar sem pasta não dá.
+    await press(KEY.ctrlS);
+    await seen("escolha pelo menos uma pasta");
+    // espaço escolhe a pasta selecionada; enter e → entram; ← sobe; dá para escolher várias.
+    await type(" ");
+    await seen(/Pastas\s+✓ .*codigo/);
+    await press(KEY.down);
+    await press(KEY.enter);
+    await seen("▸ contratos/");
+    await type(" ");
+    await seen(/✓ contratos\//);
+    await press(KEY.left);
+    await seen("▸ docs/");
+    // espaço de novo desmarca.
+    await press(KEY.up);
+    await type(" ");
+    await waitFor(() => !/✓ .*codigo/.test(frame()));
+    await type(" ");
+    // esc fecha a lista e fica o que foi escolhido; → abre de novo.
+    await press(KEY.escape);
+    await waitFor(() => !frame().includes("PASTAS"));
+    await seen(/Pastas\s+✓ .*contratos/);
+    await seen(/Pastas[\s\S]*✓ .*codigo/);
+    await seen("novo agente");
+    await press(KEY.right);
+    await seen("PASTAS");
     await press(KEY.ctrlS);
     await seen(/○ revisor/);
     const { status, body } = await t.api<{ agent: { folders: string[] } }>("/agents/revisor");
     assert.equal(status, 200);
-    assert.deepEqual(body.agent.folders, [realpathSync(join(OPENED_IN, "codigo")), realpathSync(homedir())]);
+    assert.deepEqual(body.agent.folders, [realpathSync(join(OPENED_IN, "docs", "contratos")), realpathSync(join(OPENED_IN, "codigo"))]);
+    const created = await t.api<{ agent: { role: string } }>("/agents/revisor");
+    assert.equal(created.body.agent.role, role);
   });
 
   it("pausa e retoma pela lateral", async () => {
@@ -400,6 +568,122 @@ describe("a interface", () => {
     await t.api(`/routines/${created.body.routine.id}/run`, { body: {} });
     await seen("PRECISA DE VOCÊ");
     await seen(/! rotina quebra falhou/);
+  });
+
+  it("edita o agente com e na lateral: título, função em várias linhas e modelo", async () => {
+    await press(KEY.escape);
+    for (let step = 0; step < 12; step++) ui.stdin.write(KEY.up);
+    await seen(/▌○ analista/);
+    await type("e");
+    await seen("editar analista");
+    // Começa preenchido com o que está no AGENT.md.
+    await seen(/Título\s+Acompanhamento financeiro/);
+    await clearField(30);
+    await type("Financeiro e fechamento");
+    await press(KEY.tab);
+    // Na função, enter quebra a linha.
+    await press(KEY.enter);
+    await type("Fecha o mês todo dia 30.");
+    await press(KEY.tab, KEY.tab);
+    await press(KEY.right); // modelo: opus
+    await press(KEY.ctrlS);
+    await seen("analista atualizado");
+    const { body } = await t.api<{ agent: { title: string; role: string; model?: string } }>("/agents/analista");
+    assert.equal(body.agent.title, "Financeiro e fechamento");
+    assert.match(body.agent.role, /\nFecha o mês todo dia 30\.$/);
+    assert.equal(body.agent.model, "claude-opus-5-5");
+    await seen(/analista\s+· Financeiro e fechamento/);
+  });
+
+  it("no campo de pastas, o primeiro esc fecha a lista e o segundo cancela o formulário", async () => {
+    await press(KEY.escape);
+    await type("n");
+    await seen("novo agente");
+    await press(KEY.tab, KEY.tab, KEY.tab);
+    await seen("PASTAS");
+    await seen("espaço escolhe");
+    await press(KEY.escape);
+    await waitFor(() => !frame().includes("PASTAS"));
+    await seen("novo agente");
+    await press(KEY.escape);
+    await waitFor(() => !frame().includes("novo agente ·"));
+  });
+
+  it("cria um grupo pelo formulário, escolhendo uma pasta só na lista", async () => {
+    await press(KEY.escape);
+    await type("g");
+    await seen("novo grupo");
+    await type("revisao");
+    await press(KEY.tab);
+    await seen("PASTAS");
+    await seen("▸ codigo/");
+    // Sem pasta, não salva.
+    await press(KEY.ctrlS);
+    await seen("escolha a pasta do projeto");
+    // espaço escolhe; escolher outra troca a anterior (o grupo tem uma pasta só).
+    await type(" ");
+    await seen(/Pasta\s+✓ .*codigo/);
+    await press(KEY.down);
+    await type(" ");
+    await seen(/Pasta\s+✓ .*docs/);
+    assert.doesNotMatch(frame(), /✓ .*codigo/);
+    // esc fecha a lista com a pasta escolhida; o segundo esc já cancelaria o formulário.
+    await press(KEY.escape);
+    await waitFor(() => !frame().includes("PASTAS"));
+    await seen("novo grupo");
+    await press(KEY.tab);
+    await type(" ");
+    await press(KEY.ctrlS);
+    await seen("# revisao");
+    const group = (await t.neoterm.state()).groups.find((entry) => entry.slug === "revisao");
+    assert.equal(group?.folder, realpathSync(join(OPENED_IN, "docs")));
+  });
+
+  it("edita um grupo com :editar e exclui grupo e agente com ctrl+d confirmado", async () => {
+    // Logo depois de criado, a conversa aberta é a do #revisao.
+    await seen("mensagem para o grupo");
+    await type(":editar");
+    await press(KEY.enter);
+    await seen("editar #revisao");
+    await seen(/Pasta\s+✓ .*docs/);
+    await press(KEY.escape); // fecha a lista de pastas
+    await press(KEY.tab);
+    // Membros: marca o dev também.
+    await press(KEY.right);
+    await type(" ");
+    await press(KEY.ctrlS);
+    await seen("#revisao atualizado");
+    assert.deepEqual((await t.neoterm.state()).groups.find((group) => group.slug === "revisao")?.members.toSorted(), ["analista", "dev"]);
+
+    // ctrl+d pede confirmação; outra tecla desiste.
+    await type(":editar");
+    await press(KEY.enter);
+    await seen("editar #revisao");
+    await press("\x04");
+    await seen("Aperte ctrl+d de novo");
+    await type("x");
+    await waitFor(() => !frame().includes("Aperte ctrl+d de novo"));
+    await seen("ctrl+d exclui o grupo");
+    await press("\x04", "\x04");
+    await seen("#revisao excluído");
+    await waitFor(() => !frame().includes("# revisao"));
+    assert.ok(!(await t.neoterm.state()).groups.some((group) => group.slug === "revisao"));
+
+    // Um agente: e na lateral, ctrl+d duas vezes; vai para a lixeira.
+    await press(KEY.escape);
+    for (let step = 0; step < 12; step++) ui.stdin.write(KEY.up);
+    await seen(/▌○ analista/);
+    await press(KEY.down, KEY.down);
+    await seen(/▌○ revisor/);
+    await type("e");
+    await seen("editar revisor");
+    await press("\x04");
+    await seen("Aperte ctrl+d de novo");
+    await seen("ctrl+d de novo exclui");
+    await press("\x04");
+    await seen("revisor excluído");
+    await waitFor(() => !/○ revisor/.test(frame()));
+    assert.ok(!(await t.neoterm.state()).agents.some((agent) => agent.slug === "revisor"));
   });
 });
 

@@ -9,9 +9,12 @@ import * as editor from "./editor.ts";
 
 type InkKey = Parameters<Parameters<typeof useInput>[0]>[1];
 
-/** Quebra de linha onde o enter sozinho envia: ctrl/shift+enter (protocolo kitty), option+enter, ctrl+j. */
+/**
+ * Quebra de linha onde o enter sozinho envia: shift+enter (terminais com o protocolo kitty) e, onde
+ * ele não chega diferente do enter, option+enter ou ctrl+j.
+ */
 export function isNewlineKey(input: string, key: InkKey): boolean {
-  return (key.return && (key.ctrl || key.shift || key.meta)) || (input === "\n" && !key.return);
+  return (key.return && (key.shift || key.meta)) || (input === "\n" && !key.return);
 }
 
 /**

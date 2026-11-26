@@ -1,5 +1,7 @@
-import { Box, Text } from "ink";
-import { createElement as h, type ReactNode } from "react";
+import { homedir } from "node:os";
+import { Box, type DOMElement, Text } from "ink";
+import { createElement as h, type ReactNode, type RefObject } from "react";
+import { followCursor, editKey, renderLines } from "./textarea.ts";
 import { theme } from "./theme.ts";
 
 /*
@@ -11,6 +13,24 @@ import { theme } from "./theme.ts";
 export type Option = { value: string; label: string };
 
 export type Field =
+  /** Pastas escolhidas num navegador (a App abre o navegador ao lado enquanto o campo está ativo). */
+  /**
+   * `single`: uma pasta só; escolher outra troca a anterior. `start`: onde a lista abre (sem isto,
+   * na pasta de onde a interface foi aberta).
+   */
+  | {
+      key: string;
+      label: string;
+      kind: "folders";
+      value: string[];
+      single?: boolean;
+      start?: string;
+      hint?: string;
+      placeholder?: string;
+      when?: (values: Values) => boolean;
+    }
+  /** Texto de várias linhas, com cursor: enter quebra a linha, tab sai do campo. */
+  | { key: string; label: string; kind: "textarea"; value: string; cursor: number; hint?: string; placeholder?: string; when?: (values: Values) => boolean }
   | { key: string; label: string; kind: "text"; value: string; hint?: string; placeholder?: string; when?: (values: Values) => boolean }
   | { key: string; label: string; kind: "choice"; value: string; options: Option[]; hint?: string; when?: (values: Values) => boolean }
   | {
@@ -33,6 +53,10 @@ export type FormState = {
   index: number;
   error?: string;
   busy?: boolean;
+  /** Excluir o que o formulário edita: ctrl+d, e ctrl+d de novo para confirmar. */
+  remove?: { what: string; consequence: string; run: () => Promise<void> };
+  /** O primeiro ctrl+d foi apertado: o próximo exclui. */
+  confirmingRemove?: boolean;
   /** Uma linha calculada dos valores, como "próxima execução: …". */
   preview?: (values: Values) => string | undefined;
   submit: (values: Values) => Promise<void>;
@@ -77,6 +101,12 @@ function replaceField(form: FormState, field: Field): FormState {
   return { ...form, fields, error: undefined };
 }
 
+/** O formulário com outro valor num campo, pela chave. */
+export function setFieldValue(form: FormState, key: string, value: string | string[]): FormState {
+  const fields = form.fields.map((field) => (field.key === key ? ({ ...field, value } as Field) : field));
+  return { ...form, fields, error: undefined };
+}
+
 export type FormAction = { type: "state"; form: FormState } | { type: "submit" } | { type: "cancel" };
 
 /** O que uma tecla faz no formulário. */
@@ -85,11 +115,21 @@ export function formKey(form: FormState, input: string, key: Key): FormAction {
   if (!field) return { type: "cancel" };
   if (key.escape) return { type: "cancel" };
   if (key.ctrl && input === "s") return { type: "submit" };
+  if (field.kind === "textarea" && !key.tab) {
+    const draft = { text: field.value, cursor: field.cursor };
+    const next = key.return ? { text: `${[...draft.text].slice(0, draft.cursor).join("")}\n${[...draft.text].slice(draft.cursor).join("")}`, cursor: draft.cursor + 1 } : editKey(draft, input, key as never);
+    return { type: "state", form: next ? replaceField(form, { ...field, value: next.text, cursor: next.cursor }) : form };
+  }
   if (key.return) return isLast(form) ? { type: "submit" } : { type: "state", form: move(form, 1) };
   if (key.tab) return { type: "state", form: move(form, key.shift ? -1 : 1) };
   if (key.downArrow) return { type: "state", form: move(form, 1) };
   if (key.upArrow) return { type: "state", form: move(form, -1) };
 
+  if (field.kind === "folders") {
+    // As teclas de navegar são do navegador; aqui o backspace tira a última pasta escolhida.
+    if (key.backspace || key.delete) return { type: "state", form: replaceField(form, { ...field, value: field.value.slice(0, -1) }) };
+    return { type: "state", form };
+  }
   if (field.kind === "text") {
     if (key.backspace || key.delete) return { type: "state", form: replaceField(form, { ...field, value: [...field.value].slice(0, -1).join("") }) };
     if (key.ctrl && input === "u") return { type: "state", form: replaceField(form, { ...field, value: "" }) };
@@ -104,6 +144,7 @@ export function formKey(form: FormState, input: string, key: Key): FormAction {
     }
     return { type: "state", form };
   }
+  if (field.kind === "textarea") return { type: "state", form };
   if (key.leftArrow || key.rightArrow) {
     const cursor = (field.cursor + (key.rightArrow ? 1 : -1) + field.options.length) % field.options.length;
     return { type: "state", form: replaceField(form, { ...field, cursor }) };
@@ -121,8 +162,19 @@ export function formKey(form: FormState, input: string, key: Key): FormAction {
 }
 
 const LABEL_WIDTH = 16;
+/** Quantas linhas um campo de texto mostra, no máximo. */
+const TEXT_MAX_LINES = 4;
+/** A partir de quantos caracteres o campo avisa o tamanho (o texto pode estar passando do que aparece). */
+const TEXT_LONG = 200;
 
-export function renderForm(form: FormState): ReactNode {
+/**
+ * `fit`: medido pela App. `overflowing` diz se os campos passam da altura disponível; só aí o
+ * formulário rola até o campo ativo. Cabendo, fica sempre no topo.
+ */
+export function renderForm(
+  form: FormState,
+  fit: { viewportRef?: RefObject<DOMElement | null>; contentRef?: RefObject<DOMElement | null>; overflowing?: boolean } = {},
+): ReactNode {
   const values = valuesOf(form);
   const rows: ReactNode[] = [];
   form.fields.forEach((field, index) => {
@@ -134,13 +186,64 @@ export function renderForm(form: FormState): ReactNode {
       h(Text, { color: active ? theme.accent : theme.muted, bold: active }, field.label),
     );
     let control: ReactNode;
-    if (field.kind === "text") {
-      const empty = !field.value;
+    if (field.kind === "textarea") {
+      const draft = { text: field.value, cursor: field.cursor };
+      const lineCount = field.value.split("\n").length;
+      const first = followCursor(draft, Number.MAX_SAFE_INTEGER, TEXT_MAX_LINES);
+      const cursorLine = field.value.slice(0, field.cursor).split("\n").length - 1;
+      const chars = [...field.value].length;
       control = h(
+        Box,
+        { flexDirection: "column", flexGrow: 1 },
+        h(
+          Box,
+          {
+            flexDirection: "column",
+            maxHeight: TEXT_MAX_LINES,
+            overflow: "hidden",
+            // O cursor na última linha à vista: mostra o fim dela (onde se digita); senão, o começo.
+            justifyContent: cursorLine >= first + TEXT_MAX_LINES - 1 || cursorLine === lineCount - 1 ? "flex-end" : "flex-start",
+          },
+          ...(field.value
+            ? renderLines(draft, { first, count: TEXT_MAX_LINES, focused: active }).map((line, at) => h(Box, { key: at, flexShrink: 0 }, line))
+            : [h(Text, { key: "empty" }, active ? h(Text, { inverse: true }, " ") : null, h(Text, { color: theme.muted }, field.placeholder ?? ""))]),
+        ),
+        chars > TEXT_LONG || lineCount > TEXT_MAX_LINES
+          ? h(Text, { color: theme.muted }, `${new Intl.NumberFormat("pt-BR").format(chars)} caracteres · ${lineCount} ${lineCount === 1 ? "linha" : "linhas"}`)
+          : null,
+      );
+    } else if (field.kind === "folders") {
+      // Uma pasta por linha; sem espaço, o caminho perde o começo (o fim é o que identifica).
+      control = field.value.length
+        ? h(
+            Box,
+            { flexDirection: "column", flexGrow: 1, flexShrink: 1 },
+            ...field.value.map((path) =>
+              h(
+                Box,
+                { key: path },
+                h(Text, { color: theme.green }, "✓ "),
+                h(Box, { flexShrink: 1, flexGrow: 1, flexBasis: 0, overflow: "hidden" }, h(Text, { wrap: "truncate-start" }, path.replace(homedir(), "~"))),
+              ),
+            ),
+          )
+        : h(Text, { color: theme.muted }, field.placeholder ?? "");
+    } else if (field.kind === "text") {
+      const empty = !field.value;
+      const text = h(
         Text,
         { wrap: "wrap" },
         h(Text, { color: empty ? theme.muted : undefined }, empty ? (field.placeholder ?? "") : field.value),
         active ? h(Text, { inverse: true }, " ") : null,
+      );
+      // Um texto longo (colado, por exemplo) não empurra os outros campos: o campo mostra no máximo
+      // algumas linhas, sempre o fim, que é onde se digita.
+      const long = [...field.value].length > TEXT_LONG;
+      control = h(
+        Box,
+        { flexDirection: "column", flexGrow: 1 },
+        h(Box, { flexDirection: "column", maxHeight: TEXT_MAX_LINES, overflow: "hidden", justifyContent: "flex-end" }, h(Box, { flexShrink: 0 }, text)),
+        long ? h(Text, { color: theme.muted }, `${new Intl.NumberFormat("pt-BR").format([...field.value].length)} caracteres · mostrando o fim`) : null,
       );
     } else if (field.kind === "choice") {
       control = h(
@@ -175,19 +278,47 @@ export function renderForm(form: FormState): ReactNode {
     rows.push(
       h(
         Box,
-        { key: field.key, flexDirection: "column", marginBottom: 1 },
-        h(Box, { flexDirection: "row" }, label, h(Box, { flexGrow: 1 }, control)),
+        // Os campos não encolhem: sem altura, o formulário corta embaixo, em vez de um campo
+        // desenhar por cima do outro.
+        { key: field.key, flexDirection: "column", marginBottom: 1, flexShrink: 0 },
+        h(Box, { flexDirection: "row", flexShrink: 0 }, label, h(Box, { flexGrow: 1, flexShrink: 1 }, control)),
         active && field.hint ? h(Box, { marginLeft: LABEL_WIDTH }, h(Text, { color: theme.muted }, field.hint)) : null,
       ),
     );
   });
   const preview = form.preview?.(values);
+  // Os campos rolam junto com o ativo; o rodapé (erro, confirmação de excluir, "salvando…") fica
+  // sempre à vista embaixo.
+  const activeRow = Math.max(rows.findIndex((row) => (row as { key?: string }).key === form.fields[form.index]?.key), 0);
   return h(
     Box,
-    { flexDirection: "column" },
-    ...rows,
+    { flexDirection: "column", flexGrow: 1, flexShrink: 1, flexBasis: 0 },
+    h(
+      Box,
+      {
+        ref: fit.viewportRef,
+        flexDirection: "column",
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 0,
+        overflow: "hidden",
+        justifyContent: fit.overflowing && activeRow > rows.length / 2 ? "flex-end" : "flex-start",
+      },
+      h(Box, { ref: fit.contentRef, flexDirection: "column", flexShrink: 0 }, ...rows),
+    ),
     preview ? h(Text, { key: "preview", color: theme.accent }, preview) : null,
     form.error ? h(Text, { key: "error", color: theme.red }, `✗ ${form.error}`) : null,
+    form.remove
+      ? form.confirmingRemove
+        ? h(
+            Box,
+            { key: "remove", marginTop: 1, flexDirection: "column" },
+            h(Text, { color: theme.red, bold: true }, `Aperte ctrl+d de novo para excluir ${form.remove.what}.`),
+            h(Text, { color: theme.red }, form.remove.consequence),
+            h(Text, { color: theme.muted }, "Qualquer outra tecla desiste."),
+          )
+        : h(Box, { key: "remove", marginTop: 1 }, h(Text, { color: theme.muted }, `ctrl+d exclui ${form.remove.what}`))
+      : null,
     form.busy ? h(Text, { key: "busy", color: theme.muted }, "salvando…") : null,
   );
 }

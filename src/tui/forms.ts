@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import { absolutePath } from "../config.ts";
 import { describeCron, describeWhen, nextOccurrence, validateSchedule } from "../routines/schedule.ts";
 import type { NeotermApi, ViewScope } from "./api.ts";
@@ -26,26 +27,27 @@ export function newAgentForm(api: NeotermApi, done: (slug: string) => void, cwd 
       {
         key: "role",
         label: "Função",
-        kind: "text",
+        kind: "textarea",
         value: "",
+        cursor: 0,
         placeholder: "o que ele faz, em qualquer conversa",
-        hint: "dá para detalhar depois no AGENT.md",
+        hint: "enter quebra a linha · tab segue · dá para mudar depois com :editar",
       },
       {
         key: "folders",
         label: "Pastas",
-        kind: "text",
-        value: "",
-        placeholder: "~/Projects/crm, ~/Documents/notas",
-        hint: "o escopo dele: só trabalha nestas pastas do computador · separe com vírgula",
+        kind: "folders",
+        value: [],
+        placeholder: "nenhuma ainda · escolha na lista ao lado",
+        hint: "o escopo dele: só trabalha nestas pastas",
       },
       { key: "model", label: "Modelo", kind: "choice", value: "", options: MODELS },
     ],
     submit: async (values) => {
       const slug = text(values, "slug");
       if (!text(values, "role")) throw new Error("escreva a função dele");
-      const paths = text(values, "folders").split(",").map((path) => path.trim()).filter(Boolean);
-      if (paths.length === 0) throw new Error("diga pelo menos uma pasta: o escopo dele");
+      const paths = list(values, "folders");
+      if (paths.length === 0) throw new Error("escolha pelo menos uma pasta na lista: o escopo dele");
       await api.createAgent({
         slug,
         folders: paths.map((path) => absolutePath(path, cwd)),
@@ -58,6 +60,108 @@ export function newAgentForm(api: NeotermApi, done: (slug: string) => void, cwd 
   };
 }
 
+/** O que está no AGENT.md hoje, para o formulário de edição começar preenchido. */
+export type AgentFields = { title: string; role: string; model: string | null; folders: string[] };
+
+export function editAgentForm(api: NeotermApi, slug: string, current: AgentFields, done: (deleted: boolean) => void): FormState {
+  return {
+    title: `editar ${slug}`,
+    subtitle: "muda o AGENT.md · vale a partir da próxima resposta",
+    index: 0,
+    fields: [
+      { key: "title", label: "Título", kind: "text", value: current.title, placeholder: "Acompanhamento financeiro" },
+      {
+        key: "role",
+        label: "Função",
+        kind: "textarea",
+        value: current.role,
+        cursor: [...current.role].length,
+        placeholder: "o que ele faz, em qualquer conversa",
+        hint: "enter quebra a linha · ←→↑↓ andam pelo texto · tab segue",
+      },
+      {
+        key: "folders",
+        label: "Pastas",
+        kind: "folders",
+        value: current.folders,
+        ...(current.folders[0] ? { start: dirname(current.folders[0]) } : {}),
+        placeholder: "nenhuma · escolha na lista ao lado",
+        hint: "o escopo dele: só trabalha nestas pastas",
+      },
+      { key: "model", label: "Modelo", kind: "choice", value: current.model ?? "", options: MODELS },
+    ],
+    remove: {
+      what: `o agente ${slug}`,
+      consequence: "A pasta dele vai para ~/.neoterm/trash (dá para recuperar); as rotinas desligam e ele sai dos grupos.",
+      run: async () => {
+        await api.deleteAgent(slug);
+        done(true);
+      },
+    },
+    submit: async (values) => {
+      const folders = list(values, "folders");
+      if (!text(values, "role")) throw new Error("a função não pode ficar vazia");
+      if (folders.length === 0) throw new Error("escolha pelo menos uma pasta na lista: o escopo dele");
+      await api.updateAgent(slug, {
+        title: text(values, "title"),
+        role: String(values.role ?? ""),
+        model: text(values, "model") || null,
+        folders,
+      });
+      done(false);
+    },
+  };
+}
+
+/** O que o grupo é hoje: membros em ordem (o primeiro coordena). */
+export type GroupFields = { folder: string; objective: string; members: string[] };
+
+export function editGroupForm(api: NeotermApi, slug: string, agents: string[], current: GroupFields, done: (deleted: boolean) => void): FormState {
+  return {
+    title: `editar #${slug}`,
+    subtitle: "pasta, membros e objetivo",
+    index: 0,
+    fields: [
+      {
+        key: "folder",
+        label: "Pasta",
+        kind: "folders",
+        single: true,
+        value: [current.folder],
+        start: dirname(current.folder),
+        placeholder: "nenhuma · escolha na lista ao lado",
+        hint: "a pasta do projeto, onde os agentes do grupo trabalham",
+      },
+      {
+        key: "members",
+        label: "Membros",
+        kind: "multi",
+        value: current.members,
+        options: [...new Set([...current.members, ...agents])].map((agent) => ({ value: agent, label: agent })),
+        cursor: 0,
+        hint: "espaço marca e desmarca · o primeiro marcado coordena",
+      },
+      { key: "objective", label: "Objetivo", kind: "textarea", value: current.objective, cursor: [...current.objective].length, placeholder: "opcional" },
+    ],
+    remove: {
+      what: `o grupo #${slug}`,
+      consequence: "O grupo some da lateral; a conversa dele fica guardada e os agentes continuam existindo.",
+      run: async () => {
+        await api.deleteGroup(slug);
+        done(true);
+      },
+    },
+    submit: async (values) => {
+      const folder = list(values, "folder")[0];
+      if (!folder) throw new Error("escolha a pasta do projeto na lista");
+      const members = list(values, "members");
+      if (members.length === 0) throw new Error("marque pelo menos um agente");
+      await api.updateGroup(slug, { folder, members, objective: String(values.objective ?? "").trim() });
+      done(false);
+    },
+  };
+}
+
 export function newGroupForm(api: NeotermApi, agents: string[], done: (slug: string) => void, cwd = process.cwd()): FormState {
   return {
     title: "novo grupo",
@@ -65,7 +169,15 @@ export function newGroupForm(api: NeotermApi, agents: string[], done: (slug: str
     index: 0,
     fields: [
       { key: "slug", label: "Nome", kind: "text", value: "", placeholder: "crm" },
-      { key: "folder", label: "Pasta", kind: "text", value: "", placeholder: "~/Projects/crm", hint: "a pasta do projeto; é criada se não existir" },
+      {
+        key: "folder",
+        label: "Pasta",
+        kind: "folders",
+        single: true,
+        value: [],
+        placeholder: "nenhuma ainda · escolha na lista ao lado",
+        hint: "a pasta do projeto, onde os agentes do grupo trabalham",
+      },
       {
         key: "members",
         label: "Membros",
@@ -78,13 +190,15 @@ export function newGroupForm(api: NeotermApi, agents: string[], done: (slug: str
       { key: "objective", label: "Objetivo", kind: "text", value: "", placeholder: "opcional" },
     ],
     submit: async (values) => {
+      // Na ordem dos campos na tela.
+      const folder = list(values, "folder")[0];
+      if (!folder) throw new Error("escolha a pasta do projeto na lista");
       const members = list(values, "members");
       if (members.length === 0) throw new Error("marque pelo menos um agente");
-      if (!text(values, "folder")) throw new Error("diga a pasta do projeto");
       const slug = text(values, "slug");
       await api.createGroup({
         slug,
-        folder: absolutePath(text(values, "folder"), cwd),
+        folder: absolutePath(folder, cwd),
         members,
         ...(text(values, "objective") ? { objective: text(values, "objective") } : {}),
       });

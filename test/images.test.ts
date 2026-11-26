@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { expandImages, pastedImages, shortenImages } from "../src/tui/images.ts";
 import { makeFolder } from "./harness.ts";
+import { expandImages, pastedImages, shortenImages } from "../src/tui/images.ts";
 
 describe("imagens coladas", () => {
   const folder = makeFolder("imagens");

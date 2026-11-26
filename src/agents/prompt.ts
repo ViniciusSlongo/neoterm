@@ -19,6 +19,8 @@ export type PromptContext = {
   readOnly?: boolean;
   /** Tem as ferramentas do neoterm (rotinas, retornos, memória). */
   neotermTools?: boolean;
+  /** Os agentes que ele pode consultar com ask_agent; ausente quando não pode (respondendo a uma consulta). */
+  colleagues?: { slug: string; title: string }[];
   /** Contexto a mais, como o do grupo em que está. */
   extra?: string;
 };
@@ -53,7 +55,7 @@ export function renderSystemPrompt(
     context.extra ? context.extra.trim() : "",
     files.aboutPerson ? tag("about_the_person", files.aboutPerson) : "",
     files.memory ? tag("memory", files.memory) : "",
-    context.neotermTools ? tag("neoterm_tools", toolsText()) : "",
+    context.neotermTools ? tag("neoterm_tools", toolsText(context.colleagues)) : "",
     tag("run_mode", runModeText(context.mode, context.readOnly)),
     tag("today", `Hoje é ${formatDate(context.now, context.timeZone)} (fuso ${context.timeZone}).`),
   ];
@@ -77,13 +79,20 @@ function runModeText(mode: RunMode, readOnly = false): string {
   return `${base}${readOnly ? "\nEsta execução só avisa: leia, verifique e informe, sem mudar nada." : ""}`;
 }
 
-function toolsText(): string {
+function toolsText(colleagues?: { slug: string; title: string }[]): string {
   const lines = [
     "Além das ferramentas de trabalho, você tem as do neoterm (mcp__neoterm__*):",
     "- create_routine, list_routines, update_routine, delete_routine: quando a pessoa pedir algo recorrente (\"todo dia\", \"toda sexta às 17h\"), crie uma rotina em vez de só prometer. Diga em palavras quando ela vai rodar.",
     "- schedule_followup: para voltar a esta conversa sozinho daqui a um tempo.",
     "- remember e forget: para fatos duráveis sobre a pessoa ou o trabalho, não para o que só vale agora.",
+    "Serviços que você deixar rodando (servidores, watchers, processos em segundo plano) ficam marcados como seus: a pessoa vê quanto gastam e pode encerrar. Quando um trabalho acabar, encerre o que não precisa mais ficar de pé.",
   ];
+  if (colleagues && colleagues.length > 0) {
+    const names = colleagues.map((colleague) => (colleague.title ? `${colleague.slug} (${colleague.title})` : colleague.slug)).join(", ");
+    lines.push(
+      `- ask_agent: para consultar outro agente quando a resposta depende do trabalho ou do escopo dele. Os outros agentes: ${names}. Espere a resposta antes de seguir; se ele estiver ocupado, siga com o que tem ou agende um retorno. Dentro de um grupo, prefira chamar com @nome.`,
+    );
+  }
   return lines.join("\n");
 }
 

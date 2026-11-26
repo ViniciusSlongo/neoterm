@@ -10,16 +10,34 @@
 //   !falhar <mensagem>             morre no meio, sem resultado
 //   !erro <mensagem>               termina com resultado de erro
 //   !dormir <ms>                   espera
+//   !servico <ms>                  deixa um processo rodando em segundo plano (órfão) por <ms>
 // O resto do texto é a resposta. Sem nada, responde "eco: <última linha do prompt>".
 // Cada chamada é registrada em $FAKE_CLAUDE_STATE/calls.jsonl.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 
 const argv = process.argv.slice(2);
 const option = (name) => {
   const index = argv.indexOf(name);
   return index === -1 ? undefined : argv[index + 1];
 };
+// `claude mcp list`: as integrações como o Claude Code mostraria (FAKE_MCP_LIST, ou um exemplo).
+if (argv[0] === "mcp" && argv[1] === "list") {
+  process.stdout.write(
+    process.env.FAKE_MCP_LIST ??
+      [
+        "Checking MCP server health…",
+        "",
+        "claude.ai Google Drive: https://drivemcp.googleapis.com/mcp/v1?token=segredo - ✔ Connected",
+        "claude.ai Slack: https://mcp.slack.com/mcp - ! Needs authentication",
+        "github: npx -y @modelcontextprotocol/server-github - ✗ Failed to connect",
+        "",
+      ].join("\n"),
+  );
+  process.exit(0);
+}
+
 const state = process.env.FAKE_CLAUDE_STATE ?? join(process.cwd(), ".fake-claude");
 mkdirSync(join(state, "sessions"), { recursive: true });
 
@@ -121,6 +139,10 @@ for (const line of source.split("\n")) {
     reply.push(`[${tool}] ${await callMcp(tool, args)}`);
   } else if (name === "sessao") {
     reply.push(`sessão com ${history.length} mensagens`);
+  } else if (name === "servico") {
+    const child = spawn(process.execPath, ["-e", `setTimeout(() => {}, ${Number(rest) || 60000})`], { detached: true, stdio: "ignore" });
+    child.unref();
+    reply.push(`servico ${child.pid}`);
   } else if (name === "dormir") {
     await sleep(Number(rest));
   } else if (name === "falhar") {

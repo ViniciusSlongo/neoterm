@@ -1,9 +1,9 @@
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { parse as parseYaml } from "yaml";
+import { parseDocument, parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { AGENTS_DIR, isMissingFile } from "../config.ts";
+import { AGENTS_DIR, isMissingFile, writeFileAtomic } from "../config.ts";
 
 /*
  * Quem um agente é mora num arquivo que a pessoa pode abrir no editor: ~/.neoterm/agents/<slug>/AGENT.md.
@@ -205,6 +205,80 @@ async function resolveFolders(slug: string, folders: readonly string[] | undefin
     resolved.push(await realpath(absolute));
   }
   return unique(resolved);
+}
+
+/** O que dá para mudar num agente pela interface: o resto do AGENT.md fica como está. */
+export type AgentPatch = {
+  title?: string;
+  role?: string;
+  /** null volta ao modelo padrão do neoterm. */
+  model?: string | null;
+  folders?: string[];
+};
+
+/** Os campos editáveis como estão no arquivo, mesmo que o agente esteja com um problema (uma pasta sumiu). */
+export async function readAgentFields(slug: string): Promise<{ title: string; role: string; model: string | null; folders: string[] }> {
+  if (!isValidSlug(slug)) throw new AgentNotFound(slug);
+  let source: string;
+  try {
+    source = await readFile(join(agentDir(slug), AGENT_FILE), "utf8");
+  } catch (error) {
+    if (isMissingFile(error)) throw new AgentNotFound(slug);
+    throw error;
+  }
+  const { header, body } = splitFrontmatter(source);
+  let raw: Record<string, unknown> = {};
+  try {
+    raw = (parseYaml(header) ?? {}) as Record<string, unknown>;
+  } catch {
+    // Um cabeçalho quebrado: a edição regrava os campos e conserta.
+  }
+  const folders = Array.isArray(raw.folders)
+    ? raw.folders.map((folder) => (typeof folder === "string" ? folder : String((folder as { path?: unknown })?.path ?? ""))).filter(Boolean)
+    : [];
+  return {
+    title: typeof raw.title === "string" ? raw.title : "",
+    role: body.trim(),
+    model: typeof raw.model === "string" && raw.model ? raw.model : null,
+    folders: folders.map((folder) => expandPath(folder, agentDir(slug))),
+  };
+}
+
+/**
+ * Muda o AGENT.md de um agente. Só os campos pedidos mudam; comentários e campos que a pessoa
+ * escreveu à mão no cabeçalho ficam. Vale a partir do próximo turno (o arquivo é lido a cada um).
+ */
+export async function updateAgent(slug: string, patch: AgentPatch): Promise<AgentDefinition> {
+  if (!isValidSlug(slug)) throw new AgentNotFound(slug);
+  const file = join(agentDir(slug), AGENT_FILE);
+  let source: string;
+  try {
+    source = await readFile(file, "utf8");
+  } catch (error) {
+    if (isMissingFile(error)) throw new AgentNotFound(slug);
+    throw error;
+  }
+  const { header, body } = splitFrontmatter(source);
+  const doc = parseDocument(header);
+  if (doc.errors.length > 0 || !doc.contents) {
+    throw new AgentProblem(slug, `o cabeçalho do ${AGENT_FILE} não é YAML válido; corrija à mão antes de editar por aqui`);
+  }
+  if (patch.title !== undefined) doc.set("title", patch.title.trim());
+  if (patch.model !== undefined) {
+    if (patch.model) doc.set("model", patch.model);
+    else doc.delete("model");
+  }
+  if (patch.folders !== undefined) doc.set("folders", await resolveFolders(slug, patch.folders));
+  let role = body.trim();
+  if (patch.role !== undefined) {
+    role = patch.role.trim();
+    if (!role) throw new AgentProblem(slug, "a função não pode ficar vazia");
+  }
+  const next = `---\n${doc.toString().trimEnd()}\n---\n\n${role}\n`;
+  // Confere antes de gravar: um AGENT.md que não carrega não sai daqui.
+  parseAgentFile(slug, next);
+  await writeFileAtomic(file, next);
+  return loadAgent(slug);
 }
 
 export function agentTemplate(input: NewAgent): string {

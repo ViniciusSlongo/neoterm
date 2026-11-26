@@ -3,6 +3,7 @@ import { agentDir } from "../agents/identity.ts";
 import { forget, MemoryRefused, remember } from "../agents/memory.ts";
 import type { Database } from "../db/client.ts";
 import type { EventBus } from "../events.ts";
+import { AskRefused, type AskResult } from "../agents/ask.ts";
 import { FollowupRefused, scheduleFollowup } from "../routines/followups.ts";
 import { describeWhen } from "../routines/schedule.ts";
 import {
@@ -28,14 +29,20 @@ async function asAnswer<T>(work: () => Promise<T>): Promise<T> {
   try {
     return await work();
   } catch (error) {
-    if (error instanceof RoutineRefused || error instanceof FollowupRefused || error instanceof MemoryRefused) {
+    if (error instanceof RoutineRefused || error instanceof FollowupRefused || error instanceof MemoryRefused || error instanceof AskRefused) {
       throw new ToolRefusal(`Não deu: ${error.message}.`);
     }
     throw error;
   }
 }
 
-export function neotermTools(deps: { db: Database; bus: EventBus; now?: () => Date }): ToolDefinition[] {
+export function neotermTools(deps: {
+  db: Database;
+  bus: EventBus;
+  now?: () => Date;
+  /** Consultar outro agente; quem monta o motor liga, porque precisa dos turnos. */
+  ask?: (caller: ToolCaller, to: string, question: string) => Promise<AskResult>;
+}): ToolDefinition[] {
   const { db, bus } = deps;
   const now = deps.now ?? (() => new Date());
 
@@ -140,6 +147,24 @@ export function neotermTools(deps: { db: Database; bus: EventBus; now?: () => Da
           return `Retorno agendado para ${describeWhen(followup.dueAt, caller.timeZone, now())}: ${followup.reason}`;
         }),
     },
+    ...(deps.ask
+      ? [
+          {
+            name: "ask_agent",
+            description:
+              "Consulta outro agente do neoterm e espera a resposta dele. Use quando a resposta depende do trabalho, das pastas ou do que outro agente sabe. Ele responde num turno dele, e a troca fica registrada na conversa dele com a pessoa. Recusa se ele estiver ocupado ou pausado.",
+            schema: z.object({
+              agent: z.string().min(1).describe("O nome (slug) do agente a consultar"),
+              question: z.string().min(1).describe("A pergunta, completa: ele não vê esta conversa"),
+            }),
+            run: (caller: ToolCaller, args: Record<string, unknown>) =>
+              asAnswer(async () => {
+                const result = await deps.ask!(caller, String(args.agent), String(args.question));
+                return result.answered ? `${String(args.agent).replace(/^@/, "")} respondeu:\n\n${result.text}` : `Sem resposta: ${result.reason}.`;
+              }),
+          } satisfies ToolDefinition,
+        ]
+      : []),
     {
       name: "remember",
       description:

@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import type { AgentDefinition } from "../agents/identity.ts";
+import { type AgentDefinition, listAgents } from "../agents/identity.ts";
 import { buildSystemPrompt, type RunMode } from "../agents/prompt.ts";
 import { readSettings } from "../config.ts";
 import { type Database, errorMessage } from "../db/client.ts";
@@ -25,6 +25,15 @@ export function extraDirs(agent: AgentDefinition, cwd = agent.workspace): string
   return agent.folders.filter((folder) => folder !== cwd);
 }
 
+/** Os outros agentes, que este pode consultar com ask_agent. */
+async function colleaguesOf(slug: string): Promise<{ slug: string; title: string }[]> {
+  try {
+    return (await listAgents()).agents.filter((agent) => agent.slug !== slug).map((agent) => ({ slug: agent.slug, title: agent.title }));
+  } catch {
+    return [];
+  }
+}
+
 /** Onde fica a sessão do Claude Code desta conversa: na conversa, ou no membro do grupo. */
 export type SessionSlot = { id: string | null; save(id: string): Promise<void> };
 
@@ -38,6 +47,8 @@ export type TurnSpec = {
   mode: RunMode;
   readOnly?: boolean;
   routineId?: string;
+  /** 1 quando responde a uma consulta de outro agente (sem consultar outros, sem cadeia). */
+  depth?: number;
   prompt: string;
   cwd: string;
   extraSystem?: string;
@@ -147,6 +158,7 @@ export class TurnEngine {
             ...(spec.groupId ? { groupId: spec.groupId } : {}),
             mode: spec.mode,
             timeZone: settings.timezone,
+            ...(spec.depth ? { depth: spec.depth } : {}),
           })
         : undefined;
     const started = Date.now();
@@ -154,6 +166,7 @@ export class TurnEngine {
     try {
       const base: Omit<ClaudeTurn, "sessionId" | "resume"> = {
         prompt: spec.prompt,
+        agent: slug,
         cwd: spec.cwd,
         model: spec.agent.model ?? settings.defaultModel,
         systemPrompt: await buildSystemPrompt(spec.agent, {
@@ -161,6 +174,7 @@ export class TurnEngine {
           now: new Date(),
           timeZone: settings.timezone,
           neotermTools: Boolean(token),
+          ...(token && !spec.depth ? { colleagues: await colleaguesOf(slug) } : {}),
           ...(spec.readOnly ? { readOnly: true } : {}),
           ...(spec.extraSystem ? { extra: spec.extraSystem } : {}),
         }),

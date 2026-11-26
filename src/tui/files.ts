@@ -53,7 +53,7 @@ export function referenceFor(path: string, workspace: string): string {
 
 /** O caminho para mostrar no topo do navegador: a partir do nome da pasta do escopo. */
 export function displayPath(path: string | null, roots: readonly string[]): string {
-  if (path === null) return "pastas do agente";
+  if (path === null) return "pastas";
   const root = roots.find((candidate) => inside(path, candidate));
   if (!root) return path;
   const rel = relative(root, path);

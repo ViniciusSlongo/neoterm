@@ -20,7 +20,7 @@ export async function runTui(): Promise<void> {
   process.stdout.write(ALT_SCREEN_ON + (mouse ? MOUSE_ON : ""));
   const restore = () => process.stdout.write((mouse ? MOUSE_OFF : "") + ALT_SCREEN_OFF);
   process.once("exit", restore);
-  // O protocolo de teclado kitty, onde o terminal tiver, separa ctrl+enter e shift+enter do enter.
+  // O protocolo de teclado kitty, onde o terminal tiver, separa o shift+enter do enter.
   const instance = render(h(App, { api: httpApi() }), { exitOnCtrlC: true, kittyKeyboard: { mode: "auto" } });
   try {
     await instance.waitUntilExit();

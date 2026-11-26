@@ -1,3 +1,7 @@
+import type { Dashboard } from "../dashboard.ts";
+import type { Integrations } from "../integrations.ts";
+import type { AgentProcess } from "../processes.ts";
+import type { AgentFields, GroupFields } from "./forms.ts";
 import { readEvents } from "../cli/client.ts";
 import { DAEMON_URL } from "../config.ts";
 import type { MessageAuthor, MessageMeta, MessagePart, RoutineMode, RunStatus } from "../db/schema.ts";
@@ -58,6 +62,22 @@ export interface NeotermApi {
   createAgent(input: NewAgentInput): Promise<void>;
   createGroup(input: NewGroupInput): Promise<void>;
   setPaused(slug: string, paused: boolean): Promise<void>;
+  /** O que está no AGENT.md hoje (para editar) e a edição. */
+  agentDefinition(slug: string): Promise<AgentFields>;
+  updateAgent(slug: string, patch: { title?: string; role?: string; model?: string | null; folders?: string[] }): Promise<void>;
+  /** As integrações (MCP), como o Claude Code as vê. */
+  integrations(refresh?: boolean): Promise<Integrations>;
+  /** O que o grupo é hoje (membros em ordem: o primeiro coordena) e a edição. */
+  groupDefinition(slug: string): Promise<GroupFields>;
+  updateGroup(slug: string, patch: { folder?: string; objective?: string; members?: string[] }): Promise<void>;
+  /** Excluir: o agente vai para a lixeira (~/.neoterm/trash); do grupo, a conversa fica guardada. */
+  deleteAgent(slug: string): Promise<void>;
+  deleteGroup(slug: string): Promise<void>;
+  /** Os processos do agente (o turno e os serviços que ele deixou rodando) e encerrar. */
+  processes(slug: string): Promise<{ processes: AgentProcess[]; totalBytes: number }>;
+  stopProcesses(slug: string, target: { pids: number[] } | { all: true }): Promise<number[]>;
+  /** O resumo do painel. */
+  dashboard(): Promise<Dashboard>;
   /** As notas de quem usa sobre um agente: o texto e o arquivo onde ficam. */
   notes(slug: string): Promise<{ text: string; path: string }>;
   saveNotes(slug: string, text: string): Promise<void>;
@@ -74,7 +94,15 @@ export function httpApi(base: string = DAEMON_URL): NeotermApi {
       ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
     });
     const text = await response.text();
-    const json = (text ? JSON.parse(text) : {}) as T & { error?: string };
+    let json: T & { error?: string };
+    try {
+      json = (text ? JSON.parse(text) : {}) as T & { error?: string };
+    } catch {
+      // Os erros do motor vêm em JSON; texto puro num 404 é uma rota que ele não conhece: o motor
+      // rodando é de uma versão anterior à da interface.
+      if (response.status === 404) throw new Error("o motor está desatualizado: rode neoterm service restart");
+      throw new Error(`o motor respondeu ${response.status}: ${text.slice(0, 80)}`);
+    }
     if (!response.ok) throw new Error(json.error ?? `o motor respondeu ${response.status}`);
     return json;
   };
@@ -107,6 +135,16 @@ export function httpApi(base: string = DAEMON_URL): NeotermApi {
     createAgent: async (input) => void (await call("/agents", { body: { ...input, name: input.slug } })),
     createGroup: async (input) => void (await call("/groups", { body: input })),
     setPaused: async (slug, paused) => void (await call(`/agents/${slug}/${paused ? "pause" : "resume"}`, { body: {} })),
+    dashboard: () => call<Dashboard>("/dashboard"),
+    processes: (slug) => call<{ processes: AgentProcess[]; totalBytes: number }>(`/agents/${slug}/processes`),
+    stopProcesses: async (slug, target) => (await call<{ stopped: number[] }>(`/agents/${slug}/processes/stop`, { body: target })).stopped,
+    integrations: (refresh) => call<Integrations>(`/integrations${refresh ? "?refresh=1" : ""}`),
+    groupDefinition: (slug) => call<GroupFields>(`/groups/${slug}/definition`),
+    updateGroup: async (slug, patch) => void (await call(`/groups/${slug}`, { method: "PATCH", body: patch })),
+    deleteAgent: async (slug) => void (await call(`/agents/${slug}`, { method: "DELETE", body: { confirm: true } })),
+    deleteGroup: async (slug) => void (await call(`/groups/${slug}`, { method: "DELETE", body: { confirm: true } })),
+    agentDefinition: (slug) => call<AgentFields>(`/agents/${slug}/definition`),
+    updateAgent: async (slug, patch) => void (await call(`/agents/${slug}`, { method: "PATCH", body: patch })),
     notes: (slug) => call<{ text: string; path: string }>(`/agents/${slug}/notes`),
     saveNotes: async (slug, text) => void (await call(`/agents/${slug}/notes`, { method: "PUT", body: { text } })),
     dismiss: async (id) => void (await call(`/attention/${id}/resolve`, { body: {} })),

@@ -9,15 +9,19 @@ import {
   AgentProblem,
   createAgent,
   loadAgent,
+  readAgentFields,
+  updateAgent,
 } from "../agents/identity.ts";
 import { planReset, removeAgent, reset, setPaused } from "../agents/lifecycle.ts";
 import { NOTES_MAX_LENGTH, readNotes, writeNotes } from "../agents/notes.ts";
 import { Neoterm } from "../app.ts";
 import { resolveAttention } from "../attention.ts";
 import { DAEMON_PORT, readSettings } from "../config.ts";
+import { listIntegrations } from "../integrations.ts";
+import { agentProcesses, stopProcesses } from "../processes.ts";
 import { applyMigrations, connect, errorMessage } from "../db/client.ts";
 import type { NeotermEvent, TurnEvent } from "../events.ts";
-import { GroupProblem, addMember, createGroup, deleteGroup, getGroup, removeMember } from "../groups/store.ts";
+import { GroupProblem, addMember, createGroup, deleteGroup, getGroup, removeMember, updateGroup } from "../groups/store.ts";
 import { FollowupRefused, cancelFollowup, pendingFollowups } from "../routines/followups.ts";
 import {
   createRoutine,
@@ -42,6 +46,18 @@ import { runs } from "../db/schema.ts";
 const Text = z.object({ text: z.string().trim().min(1).max(100_000) });
 const Confirm = z.object({ confirm: z.literal(true) });
 const Notes = z.object({ text: z.string().max(NOTES_MAX_LENGTH) });
+const StopProcesses = z.object({ pids: z.array(z.number().int().positive()).optional(), all: z.boolean().optional() });
+const GroupPatch = z.object({
+  folder: z.string().min(1).optional(),
+  objective: z.string().max(10_000).optional(),
+  members: z.array(z.string().min(1)).min(1).optional(),
+});
+const AgentPatch = z.object({
+  title: z.string().max(200).optional(),
+  role: z.string().max(100_000).optional(),
+  model: z.string().min(1).nullable().optional(),
+  folders: z.array(z.string().min(1)).min(1).optional(),
+});
 const NewAgent = z.object({
   slug: z.string().min(1),
   name: z.string().optional(),
@@ -107,6 +123,9 @@ export function createApp(neoterm: Neoterm): Hono {
 
   app.get("/health", (c) => c.json({ ok: true }));
   app.get("/state", async (c) => c.json(await neoterm.state()));
+  app.get("/dashboard", async (c) => c.json(await neoterm.dashboard()));
+  // As integrações (MCP) como o Claude Code as vê; ?refresh=1 testa de novo.
+  app.get("/integrations", async (c) => c.json(await listIntegrations({ refresh: c.req.query("refresh") === "1" })));
 
   app.get("/events", (c) =>
     streamSSE(c, async (stream) => {
@@ -189,6 +208,29 @@ export function createApp(neoterm: Neoterm): Hono {
       await writes;
     });
   });
+  // O que está no AGENT.md, para editar (lê mesmo com uma pasta faltando) e a edição.
+  app.get("/agents/:slug/definition", async (c) => c.json(await readAgentFields(c.req.param("slug"))));
+  app.patch("/agents/:slug", async (c) => {
+    const patch = await body(c.req.raw, AgentPatch);
+    const agent = await updateAgent(c.req.param("slug"), patch);
+    bus.changed("agents");
+    return c.json({ agent });
+  });
+  // Os processos do agente (o turno e o que ele deixou rodando), e encerrar.
+  app.get("/agents/:slug/processes", async (c) => {
+    const slug = (await loadAgent(c.req.param("slug")).catch(() => ({ slug: c.req.param("slug") }))).slug;
+    const list = await agentProcesses(slug);
+    return c.json({ processes: list, totalBytes: list.reduce((sum, entry) => sum + entry.rssBytes, 0) });
+  });
+  app.post("/agents/:slug/processes/stop", async (c) => {
+    const slug = c.req.param("slug");
+    const input = await body(c.req.raw, StopProcesses);
+    // "Todos" são os serviços; o `claude` de um turno em andamento não entra (encerrar quebraria o turno).
+    const pids = input.all ? (await agentProcesses(slug)).filter((entry) => entry.kind === "service").map((entry) => entry.pid) : (input.pids ?? []);
+    const stopped = await stopProcesses(slug, pids);
+    void neoterm.idle.check().catch(() => {});
+    return c.json({ stopped });
+  });
   // As notas de quem usa sobre o agente (notas.txt na pasta dele).
   app.get("/agents/:slug/notes", async (c) => c.json(await readNotes(c.req.param("slug"))));
   app.put("/agents/:slug/notes", async (c) => {
@@ -211,7 +253,10 @@ export function createApp(neoterm: Neoterm): Hono {
   });
   app.delete("/agents/:slug", async (c) => {
     await body(c.req.raw, Confirm);
-    return c.json({ trash: await removeAgent(neoterm.core, c.req.param("slug")) });
+    const slug = c.req.param("slug");
+    // Excluir move a pasta dele para a lixeira: não no meio de um turno, que trabalha nela.
+    if (neoterm.core.engine.running.includes(slug)) return c.json({ error: `${slug} está trabalhando agora; exclua quando ele terminar` }, 409);
+    return c.json({ trash: await removeAgent(neoterm.core, slug) });
   });
   app.get("/agents/:slug/runs", async (c) => {
     const row = await findAgentRow(db, c.req.param("slug"));
@@ -333,9 +378,29 @@ export function createApp(neoterm: Neoterm): Hono {
     bus.changed("groups");
     return c.json({ ok: true });
   });
+  // O que o grupo é hoje, para editar, e a edição. Membros em ordem: o primeiro coordena.
+  app.get("/groups/:slug/definition", async (c) => {
+    const group = await getGroup(db, c.req.param("slug"));
+    const members = group.members.toSorted((a, b) => Number(b.coordinator) - Number(a.coordinator)).map((member) => member.agent.slug);
+    return c.json({ folder: group.folder, objective: group.objective, members });
+  });
+  app.patch("/groups/:slug", async (c) => {
+    const patch = await body(c.req.raw, GroupPatch);
+    const members = [];
+    for (const slug of patch.members ?? []) members.push({ agentId: (await ensureAgentRow(db, (await loadAgent(slug)).slug)).id });
+    await updateGroup(db, c.req.param("slug"), {
+      ...(patch.folder !== undefined ? { folder: patch.folder } : {}),
+      ...(patch.objective !== undefined ? { objective: patch.objective } : {}),
+      ...(patch.members !== undefined ? { members } : {}),
+    });
+    bus.changed("groups");
+    return c.json({ ok: true });
+  });
   app.delete("/groups/:slug", async (c) => {
     await body(c.req.raw, Confirm);
-    await deleteGroup(db, await getGroup(db, c.req.param("slug")), neoterm.core.now());
+    const group = await getGroup(db, c.req.param("slug"));
+    if (neoterm.groups.isBusy(group.id)) return c.json({ error: `#${group.slug} está conversando agora; exclua quando a rodada terminar` }, 409);
+    await deleteGroup(db, group, neoterm.core.now());
     bus.changed("groups");
     return c.json({ ok: true });
   });

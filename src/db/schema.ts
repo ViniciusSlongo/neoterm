@@ -25,14 +25,18 @@ export type MessageMeta = {
   mentions?: string[];
   /** Pediu uma decisão da pessoa com @você. */
   asksPerson?: boolean;
+  /** Uma consulta de outro agente (ask_agent): quem perguntou. */
+  fromAgent?: string;
   notice?: "routine_failed" | "routine_disabled" | "group_stopped" | "agent_paused" | "followup" | "access_granted";
 };
 
-export type RunTrigger = "chat" | "routine" | "followup" | "group";
+/** `agent`: respondendo a uma consulta de outro agente (ask_agent). */
+export type RunTrigger = "chat" | "routine" | "followup" | "group" | "agent";
 export type RunStatus = "running" | "succeeded" | "failed" | "skipped";
 export type RoutineMode = "act" | "notify";
 export type FollowupStatus = "scheduled" | "running" | "done" | "skipped" | "cancelled";
-export type AttentionKind = "access" | "routine_failed" | "routine_disabled" | "group_waiting" | "group_stopped";
+/** `idle_services`: um agente parado há um tempo com serviços que ele deixou rodando. */
+export type AttentionKind = "access" | "routine_failed" | "routine_disabled" | "group_waiting" | "group_stopped" | "idle_services";
 
 let lastStamp = 0;
 /**

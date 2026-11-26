@@ -1,3 +1,4 @@
+import { askAgent } from "./agents/ask.ts";
 import { chatWithAgent } from "./agents/chat.ts";
 import type { Core } from "./core.ts";
 import { connect } from "./db/client.ts";
@@ -9,6 +10,8 @@ import type { PlanUsage } from "./runner/claude.ts";
 import { RoutineRunner } from "./routines/runner.ts";
 import { closeInterruptedWork, Scheduler } from "./routines/scheduler.ts";
 import { TurnEngine } from "./runner/turn.ts";
+import { buildDashboard } from "./dashboard.ts";
+import { IdleWatch } from "./idle.ts";
 import { buildState } from "./state.ts";
 
 /** O motor inteiro, montado sobre um banco. O servidor HTTP e os testes usam isto. */
@@ -18,18 +21,29 @@ export class Neoterm {
   readonly groups: GroupEngine;
   readonly routines: RoutineRunner;
   readonly scheduler: Scheduler;
+  readonly idle: IdleWatch;
   #mcpUrl: string | undefined;
   #planUsage: PlanUsage | null = null;
+  readonly #startedAt = new Date();
 
-  constructor(db: ReturnType<typeof connect>["db"], options: { now?: () => Date } = {}) {
+  constructor(db: ReturnType<typeof connect>["db"], options: { now?: () => Date; askTimeoutMs?: number; idleMs?: number } = {}) {
     const bus = new EventBus();
     const now = options.now ?? (() => new Date());
-    this.hub = new McpHub(neotermTools({ db, bus, now }));
+    this.hub = new McpHub(
+      neotermTools({
+        db,
+        bus,
+        now,
+        ask: (caller, to, question) =>
+          askAgent(this.core, caller, to, question, options.askTimeoutMs ? { timeoutMs: options.askTimeoutMs } : {}),
+      }),
+    );
     const engine = new TurnEngine({ db, bus, hub: this.hub, mcpUrl: () => this.#mcpUrl });
     this.core = { db, bus, engine, now };
     this.groups = new GroupEngine(this.core);
     this.routines = new RoutineRunner(this.core, this.groups);
     this.scheduler = new Scheduler(this.core, this.routines);
+    this.idle = new IdleWatch(this.core, options.idleMs !== undefined ? { idleMs: options.idleMs } : {});
     bus.subscribe((event) => {
       if (event.type === "plan_usage") this.#planUsage = event.usage;
     });
@@ -43,10 +57,12 @@ export class Neoterm {
   async start(): Promise<void> {
     await closeInterruptedWork(this.core);
     this.scheduler.start();
+    this.idle.start();
   }
 
   stop(): void {
     this.scheduler.stop();
+    this.idle.stop();
   }
 
   chat(slug: string, text: string, onEvent?: (event: TurnEvent) => void) {
@@ -55,5 +71,9 @@ export class Neoterm {
 
   state() {
     return buildState(this.core, this.groups, this.#planUsage);
+  }
+
+  async dashboard() {
+    return buildDashboard(this.core, await this.state(), this.#startedAt);
   }
 }

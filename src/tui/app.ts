@@ -1,16 +1,26 @@
 import { homedir } from "node:os";
-import { Box, type DOMElement, Text, Transform, useApp, useBoxMetrics, useInput, usePaste, useStdin, useWindowSize } from "ink";
+import { Box, type DOMElement, Text, useApp, useBoxMetrics, useInput, usePaste, useStdin, useWindowSize } from "ink";
 import { createElement as h, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MessagePart } from "../db/schema.ts";
 import type { NeotermEvent } from "../events.ts";
 import { describeCron, describeWhen } from "../routines/schedule.ts";
 import type { NeotermState } from "../state.ts";
 import type { NeotermApi, RoutineItem, RunItem, ViewMessage, ViewScope } from "./api.ts";
-import { type FormState, formKey, renderForm, valuesOf } from "./form.ts";
-import { newAgentForm, newGroupForm, newRoutineForm } from "./forms.ts";
+import { type FormState, formKey, renderForm, setFieldValue, valuesOf } from "./form.ts";
+import { editAgentForm, editGroupForm, newAgentForm, newGroupForm, newRoutineForm } from "./forms.ts";
+import { renderDashboard } from "./dashboard.ts";
+import { renderIntegrations } from "./integrations.ts";
+import type { Integrations } from "../integrations.ts";
+import type { Dashboard } from "../dashboard.ts";
 import * as editor from "./editor.ts";
 import { clipboardImage, expandImages, pastedImages, shortenImages } from "./images.ts";
-import { displayPath, type Entry, filterEntries, listDir, parentOf, referenceFor, rootEntries } from "./files.ts";
+import { type Browser, browserKey, load as loadBrowser, newBrowser, renderBrowser } from "./browser.ts";
+import { referenceFor } from "./files.ts";
+import { renderMarkdown } from "./markdown.ts";
+import { parseCommand } from "./commands.ts";
+import { renderHelp } from "./help.ts";
+import { type ProcessView, renderProcesses } from "./processes.ts";
+import { bytes } from "./format.ts";
 import { captureMouse } from "./mouse.ts";
 import { editKey, followCursor, isNewlineKey, renderLines } from "./textarea.ts";
 import { SPINNER, theme } from "./theme.ts";
@@ -24,27 +34,16 @@ type Item =
   | { kind: "agent"; slug: string }
   | { kind: "group"; slug: string }
   | { kind: "attention"; id: string }
+  | { kind: "dashboard" }
+  | { kind: "integrations" }
   | { kind: "new-agent" }
   | { kind: "new-group" };
 
-type Mode = "chat" | "routines" | "form" | "attention";
+type Mode = "chat" | "routines" | "form" | "attention" | "processes" | "help";
 type Live = { agent: string; parts: MessagePart[] };
 /** As notas abertas à direita: as de um agente, com o texto em edição e o que já está no arquivo. */
-/**
- * O navegador de arquivos do :path. `dir` null é o topo de um escopo com várias pastas; `filter`
- * não nulo é o modo de filtrar (o / do nvim), com o que já foi digitado.
- */
-type Picker = {
-  scope: string;
-  roots: string[];
-  workspace: string;
-  dir: string | null;
-  entries: Entry[];
-  index: number;
-  filter: string | null;
-  hidden: boolean;
-  error?: string;
-};
+/** O navegador do :path: o de pastas, mais a conversa de onde abriu e a pasta onde o agente roda. */
+type Picker = { scope: string; workspace: string; browser: Browser };
 type Notes = { slug: string; draft: editor.Draft; saved: string; path: string; saving: boolean; failed: boolean };
 type InkKey = Parameters<Parameters<typeof useInput>[0]>[1];
 
@@ -62,6 +61,8 @@ function itemsOf(state: NeotermState | null): Item[] {
     ...state.agents.map((agent) => ({ kind: "agent", slug: agent.slug }) as const),
     ...state.groups.map((group) => ({ kind: "group", slug: group.slug }) as const),
     ...state.attention.map((item) => ({ kind: "attention", id: item.id }) as const),
+    { kind: "dashboard" },
+    { kind: "integrations" },
     { kind: "new-agent" },
     { kind: "new-group" },
   ];
@@ -83,11 +84,6 @@ function truncate(text: string, width: number): string {
   return chars.length > width ? `${chars.slice(0, Math.max(width - 1, 0)).join("")}…` : chars.join("");
 }
 
-/**
- * Quando o ink quebra uma linha bem num espaço, a linha seguinte começa com ele. Um espaço só antes
- * do texto é isso; recuos de verdade (listas aninhadas, código) têm dois ou mais e ficam.
- */
-const dropWrapSpace = (line: string, index: number) => (index > 0 ? line.replace(/^ (?=\S)/, "") : line);
 
 /** O texto com as menções em destaque. */
 function withMentions(text: string, key: string): ReactNode {
@@ -112,7 +108,7 @@ function renderParts(parts: MessagePart[], keyPrefix: string): ReactNode[] {
           // Ponto com largura fixa e texto com base 0: se os dois encolhessem juntos, a largura
           // do texto ficaria fracionária e o ink quebraria a linha uma coluna além do que recorta.
           h(Box, { width: 2, flexShrink: 0 }, h(Text, { color: theme.green }, "●")),
-          h(Box, { flexGrow: 1, flexShrink: 1, flexBasis: 0 }, h(Transform, { transform: dropWrapSpace }, withMentions(part.text, "x"))),
+          renderMarkdown(part.text, `${keyPrefix}m${index}`),
         ),
       ];
     }
@@ -139,23 +135,12 @@ function renderParts(parts: MessagePart[], keyPrefix: string): ReactNode[] {
   });
 }
 
-/**
- * A mensagem de quem usa: um bloco com fundo e uma barra à esquerda, para não se confundir com as
- * respostas. `queued`: enviada enquanto o agente ainda responde; vai no próximo turno.
- */
-function renderPerson(message: ViewMessage, inGroup: boolean, timeZone: string, queued = false): ReactNode {
-  const header = inGroup || queued
-    ? h(
-        Text,
-        null,
-        inGroup ? h(Text, { color: theme.accent, bold: true }, "você") : null,
-        h(Text, { color: theme.muted }, `${inGroup ? "  " : ""}${queued ? "na fila · vai quando ele terminar" : clock(message.createdAt, timeZone)}`),
-      )
-    : null;
+/** O bloco das mensagens de quem usa: fundo e uma barra à esquerda, para não se confundir com as respostas. */
+function personBlock(key: string, barColor: string, ...children: ReactNode[]): ReactNode {
   return h(
     Box,
     {
-      key: message.id,
+      key,
       flexDirection: "column",
       marginBottom: 1,
       flexShrink: 0,
@@ -165,15 +150,68 @@ function renderPerson(message: ViewMessage, inGroup: boolean, timeZone: string, 
       borderTop: false,
       borderRight: false,
       borderBottom: false,
-      borderColor: queued ? theme.muted : theme.accent,
+      borderColor: barColor,
     },
-    header,
-    withMentions(shortenImages(message.text), "p"),
+    ...children,
+  );
+}
+
+function renderPerson(message: ViewMessage, inGroup: boolean, timeZone: string): ReactNode {
+  const header = inGroup
+    ? h(Text, null, h(Text, { color: theme.accent, bold: true }, "você"), h(Text, { color: theme.muted }, `  ${clock(message.createdAt, timeZone)}`))
+    : null;
+  return personBlock(message.id, theme.accent, header, withMentions(shortenImages(message.text), "p"));
+}
+
+/**
+ * O que você mandou enquanto o agente ainda respondia, num bloco só: "na fila" e as mensagens
+ * numeradas, na ordem em que vão ser respondidas (uma por turno).
+ */
+function renderQueue(texts: readonly string[]): ReactNode {
+  return personBlock(
+    "queue",
+    theme.muted,
+    h(Text, { color: theme.muted }, "na fila"),
+    ...texts.map((text, position) =>
+      h(
+        Box,
+        { key: position, flexShrink: 0 },
+        h(Box, { width: `${texts.length}`.length + 2, flexShrink: 0 }, h(Text, { color: theme.muted }, `${position + 1}.`)),
+        h(Box, { flexGrow: 1, flexShrink: 1, flexBasis: 0 }, withMentions(shortenImages(text), `q${position}`)),
+      ),
+    ),
+  );
+}
+
+/** Uma consulta de outro agente (ask_agent): quem perguntou e a pergunta, num bloco próprio. */
+function renderConsult(message: ViewMessage, timeZone: string): ReactNode {
+  return h(
+    Box,
+    {
+      key: message.id,
+      flexDirection: "column",
+      marginBottom: 1,
+      flexShrink: 0,
+      paddingX: 1,
+      borderStyle: "bold",
+      borderTop: false,
+      borderRight: false,
+      borderBottom: false,
+      borderColor: theme.amber,
+    },
+    h(
+      Text,
+      null,
+      h(Text, { color: theme.amber, bold: true }, `${message.meta.fromAgent} pergunta`),
+      h(Text, { color: theme.muted }, `  ${clock(message.createdAt, timeZone)} · consulta de outro agente`),
+    ),
+    withMentions(message.text, "c"),
   );
 }
 
 function renderMessage(message: ViewMessage, inGroup: boolean, timeZone: string): ReactNode {
   const time = h(Text, { color: theme.muted }, `  ${clock(message.createdAt, timeZone)}`);
+  if (message.meta.fromAgent) return renderConsult(message, timeZone);
   switch (message.author) {
     case "person":
       return renderPerson(message, inGroup, timeZone);
@@ -256,7 +294,18 @@ export function App({
   const content = useBoxMetrics(contentRef);
   const maxScroll = Math.max(content.height - viewport.height, 0);
   const lastContentHeight = useRef(0);
-  const [form, setForm] = useState<FormState | null>(null);
+  const [form, setFormState] = useState<FormState | null>(null);
+  // O formulário mais recente, mesmo antes de renderizar: teclas que chegam juntas (uma tecla
+  // segurada, uma colagem) partem cada uma do resultado da anterior, e não se atropelam.
+  const formRef = useRef(form);
+  const formViewportRef = useRef<DOMElement>(null);
+  const formContentRef = useRef<DOMElement>(null);
+  const formViewport = useBoxMetrics(formViewportRef);
+  const formContent = useBoxMetrics(formContentRef);
+  const setForm = (next: FormState | null) => {
+    formRef.current = next;
+    setFormState(next);
+  };
   const [routines, setRoutines] = useState<RoutineItem[]>([]);
   const [routineIndex, setRoutineIndex] = useState(0);
   const [runs, setRuns] = useState<RunItem[]>([]);
@@ -417,10 +466,67 @@ export function App({
   }, [content.height]);
   const scrollBy = (lines: number) => setScrollUp((value) => Math.min(Math.max(value + lines, 0), maxScroll));
 
+  // ---------- páginas: painel e integrações ----------
+  const isDashboard = item?.kind === "dashboard";
+  const isIntegrations = item?.kind === "integrations";
+  const isPage = isDashboard || isIntegrations;
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+  // As páginas rolam de cima para baixo: quantas linhas do topo já passaram.
+  const [pageTop, setPageTop] = useState(0);
+  const scrollPage = (lines: number) => setPageTop((value) => Math.min(Math.max(value + lines, 0), maxScroll));
+  useEffect(() => setPageTop(0), [item?.kind, mode]);
+  // Aberto, o painel se atualiza a cada 5 segundos.
+  useEffect(() => {
+    if (!isDashboard) return;
+    let alive = true;
+    const load = () =>
+      api.dashboard().then(
+        (data) => {
+          if (!alive) return;
+          setDashboard(data);
+          setDashboardError(null);
+        },
+        (error: Error) => alive && setDashboardError(error.message),
+      );
+    void load();
+    const timer = setInterval(() => void load(), 5000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [api, isDashboard]);
+
+  // As integrações: o Claude Code testa cada uma, então só ao abrir a tela e quando se pede (r).
+  const [integrations, setIntegrations] = useState<Integrations | null>(null);
+  const [integrationsError, setIntegrationsError] = useState<string | null>(null);
+  const [integrationsLoading, setIntegrationsLoading] = useState(false);
+  const loadIntegrations = useCallback(
+    (refresh = false) => {
+      setIntegrationsLoading(true);
+      api.integrations(refresh).then(
+        (data) => {
+          setIntegrations(data);
+          setIntegrationsError(null);
+          setIntegrationsLoading(false);
+        },
+        (error: Error) => {
+          setIntegrationsError(error.message);
+          setIntegrationsLoading(false);
+        },
+      );
+    },
+    [api],
+  );
+  useEffect(() => {
+    if (isIntegrations) loadIntegrations();
+  }, [isIntegrations, loadIntegrations]);
+
   // A roda do mouse rola a conversa, de onde estiver o foco.
   const { stdin } = useStdin();
   const onWheel = useRef((_direction: 1 | -1) => {});
   onWheel.current = (direction) => {
+    if (isPage || mode === "help") return scrollPage(-direction * WHEEL_LINES);
     if (mode === "chat") scrollBy(direction * WHEEL_LINES);
   };
   useEffect(() => captureMouse(stdin, (direction) => onWheel.current(direction)), [stdin]);
@@ -441,8 +547,11 @@ export function App({
     void api.routineRuns(routine.id).then(setRuns, () => setRuns([]));
   }, [api, mode, routine?.id, routine?.failureStreak, routine?.enabled]);
 
+  // De onde o formulário foi aberto: ao salvar ou cancelar, volta para lá (a lateral, se foi de lá).
+  const formReturnFocus = useRef<typeof focus>("main");
   const openForm = (next: FormState) => {
     formReturn.current = mode === "routines" ? "routines" : "chat";
+    formReturnFocus.current = focus === "sidebar" ? "sidebar" : "main";
     setForm(next);
     setMode("form");
     setFocus("main");
@@ -455,6 +564,24 @@ export function App({
         say(`agente ${slug} criado`);
       }, cwd),
     );
+  /** Edita (ou exclui) um agente ou um grupo: o formulário começa com o que ele é hoje. */
+  const openEditForm = (target: { kind: "agent" | "group"; slug: string }) => {
+    const { slug } = target;
+    const finished = (deleted: boolean, label: string) => {
+      say(deleted ? `${label} excluído` : target.kind === "agent" ? `${label} atualizado: vale a partir da próxima resposta` : `${label} atualizado`);
+      void refreshState();
+    };
+    if (target.kind === "agent") {
+      return void api.agentDefinition(slug).then(
+        (current) => openForm(editAgentForm(api, slug, current, (deleted) => finished(deleted, slug))),
+        (error: Error) => say(`não abri ${slug} para editar: ${error.message}`),
+      );
+    }
+    void api.groupDefinition(slug).then(
+      (current) => openForm(editGroupForm(api, slug, agentNames, current, (deleted) => finished(deleted, `#${slug}`))),
+      (error: Error) => say(`não abri #${slug} para editar: ${error.message}`),
+    );
+  };
   const openGroupForm = () => {
     if (agentNames.length === 0) return say("crie um agente antes");
     openForm(
@@ -474,6 +601,90 @@ export function App({
       }),
     );
   };
+  // ---------- processos do agente ----------
+  const [processes, setProcesses] = useState<ProcessView | null>(null);
+  const [processesError, setProcessesError] = useState<string | null>(null);
+  const [processIndex, setProcessIndex] = useState(0);
+  const [confirmStop, setConfirmStop] = useState<"one" | "all" | null>(null);
+  const [processExpanded, setProcessExpanded] = useState(false);
+  useEffect(() => setProcessExpanded(false), [processIndex]);
+  const processAgent = scope?.kind === "agent" ? scope.slug : null;
+  const agentBusy = processAgent ? (state?.agents.find((agent) => agent.slug === processAgent)?.state === "running" || working.has(processAgent)) : false;
+  const loadProcesses = useCallback(() => {
+    if (!processAgent) return;
+    const slug = processAgent;
+    api.processes(slug).then(
+      (data) => {
+        if (currentRef.current !== `agent:${slug}`) return;
+        setProcesses(data);
+        setProcessesError(null);
+      },
+      (error: Error) => setProcessesError(error.message),
+    );
+  }, [api, processAgent]);
+  // Lê na tela de processos (a cada 3 s) e, na conversa, enquanto ele trabalha (para a memória no cabeçalho).
+  useEffect(() => {
+    setProcesses(null);
+    setProcessIndex(0);
+    setConfirmStop(null);
+  }, [processAgent]);
+  useEffect(() => {
+    if (!processAgent || (mode !== "processes" && !(mode === "chat" && agentBusy))) return;
+    loadProcesses();
+    const timer = setInterval(loadProcesses, mode === "processes" ? 3000 : 5000);
+    return () => clearInterval(timer);
+  }, [processAgent, mode, agentBusy, loadProcesses]);
+  // Ao terminar o turno, uma leitura final: o que ficou rodando continua no cabeçalho.
+  useEffect(() => {
+    if (processAgent && !agentBusy) loadProcesses();
+  }, [agentBusy, processAgent, loadProcesses]);
+
+  const openProcesses = () => {
+    if (!scope || scope.kind !== "agent") return say("processos são de cada agente: abra a conversa com um");
+    setProcessIndex(0);
+    setConfirmStop(null);
+    setMode("processes");
+    setFocus("main");
+    loadProcesses();
+  };
+
+  const handleProcesses = (input: string, key: InkKey) => {
+    const list = processes?.processes ?? [];
+    if (confirmStop) {
+      const confirmed = (confirmStop === "one" && input === "x") || (confirmStop === "all" && input === "X");
+      const kind = confirmStop;
+      setConfirmStop(null);
+      if (!confirmed || !processAgent) return;
+      const target = kind === "all" ? ({ all: true } as const) : { pids: [list[processIndex]?.pid ?? -1] };
+      return void api.stopProcesses(processAgent, target).then(
+        (stopped) => {
+          say(stopped.length ? `encerrado${stopped.length > 1 ? `s ${stopped.length} processos` : ""}` : "nada para encerrar");
+          loadProcesses();
+        },
+        (error: Error) => setProcessesError(error.message),
+      );
+    }
+    if (key.escape || key.tab) return setMode("chat");
+    if (key.upArrow || input === "k") return setProcessIndex((value) => Math.max(value - 1, 0));
+    if (key.downArrow || input === "j") return setProcessIndex((value) => Math.min(value + 1, Math.max(list.length - 1, 0)));
+    if (input === "r") return loadProcesses();
+    if (key.return) return setProcessExpanded((value) => !value);
+    if (input === "x" && list[processIndex]) return setConfirmStop("one");
+    if (input === "X" && list.some((entry) => entry.kind === "service")) return setConfirmStop("all");
+  };
+
+  // ---------- ajuda ----------
+  const helpReturn = useRef<{ mode: Mode; focus: typeof focus }>({ mode: "chat", focus: "main" });
+  const openHelp = () => {
+    helpReturn.current = { mode: mode === "help" ? "chat" : mode, focus: focus === "notes" || focus === "files" ? "main" : focus };
+    setMode("help");
+    setFocus("main");
+  };
+  const closeHelp = () => {
+    setMode(helpReturn.current.mode);
+    setFocus(helpReturn.current.focus);
+  };
+
   const openRoutines = () => {
     if (!scope) return;
     void loadRoutines();
@@ -484,6 +695,7 @@ export function App({
   const closeForm = () => {
     setForm(null);
     setMode(formReturn.current);
+    setFocus(formReturnFocus.current);
   };
   const move = (step: number) => {
     setSelected((value) => Math.min(Math.max(Math.min(value, items.length - 1) + step, 0), Math.max(items.length - 1, 0)));
@@ -544,16 +756,34 @@ export function App({
     const text = expandImages(draft.text, images.current).trim();
     if (!text || !scope) return;
     clearDraft();
-    if (text === "/rotinas") return openRoutines();
-    if (text === ":notes" || text === ":notas") {
-      if (scope.kind !== "agent") return say("as notas são de cada agente: abra a conversa com um");
-      return openNotes(scope.slug);
+    // Comandos: com : ou / na frente (:notas, /notas).
+    switch (parseCommand(text)) {
+      case "ajuda":
+        return openHelp();
+      case "rotinas":
+        return openRoutines();
+      case "processos":
+        return openProcesses();
+      case "painel":
+        return openDashboard();
+      case "mcp":
+        return openIntegrations();
+      case "editar":
+        return openEditForm(scope);
+      case "path":
+        return openPicker();
+      case "notas":
+        if (scope.kind !== "agent") return say("as notas são de cada agente: abra a conversa com um");
+        return openNotes(scope.slug);
+      case "pausar":
+      case "retomar": {
+        if (scope.kind !== "agent") return say("só agentes pausam");
+        const pause = parseCommand(text) === "pausar";
+        return run(api.setPaused(scope.slug, pause), pause ? `${scope.slug} pausado` : `${scope.slug} retomado`);
+      }
+      case null:
+        break;
     }
-    if (text === "/pausar" || text === "/retomar") {
-      if (scope.kind !== "agent") return say("só agentes pausam");
-      return run(api.setPaused(scope.slug, text === "/pausar"), text === "/pausar" ? `${scope.slug} pausado` : `${scope.slug} retomado`);
-    }
-    if (text === "/ajuda") return say(":path escolhe um arquivo · :notes abre as notas · /rotinas · /pausar · /retomar · ctrl+enter, option+enter ou ctrl+j: nova linha · ctrl+v cola imagem · roda do mouse ou pgup/pgdn rola · ctrl+c sai");
     const key = scopeKey(scope);
     setPending((current) => ({ ...current, [key]: [...(current[key] ?? []), text] }));
     setScrollUp(0);
@@ -563,8 +793,70 @@ export function App({
     });
   };
 
+  // ---------- navegador de pastas do formulário ----------
+  // Enquanto o campo de pastas está ativo, um navegador do computador todo (só pastas) fica ao lado.
+  const [formBrowser, setFormBrowserState] = useState<Browser | null>(null);
+  const formBrowserRef = useRef(formBrowser);
+  const setFormBrowser = (next: Browser | null | ((current: Browser | null) => Browser | null)) => {
+    const value = typeof next === "function" ? next(formBrowserRef.current) : next;
+    formBrowserRef.current = value;
+    setFormBrowserState(value);
+  };
+  const formBrowserAreaRef = useRef<DOMElement>(null);
+  const formBrowserArea = useBoxMetrics(formBrowserAreaRef);
+  const activeField = mode === "form" && form ? form.fields[form.index] : undefined;
+  // A lista abre ao chegar no campo de pastas; esc fecha (fica o que foi escolhido) e o próximo esc
+  // já é do formulário. → abre de novo, e voltar ao campo também.
+  const [formBrowserOpen, setFormBrowserOpen] = useState(true);
+  useEffect(() => setFormBrowserOpen(true), [mode, form?.index]);
+  const choosingFolders = activeField?.kind === "folders" && formBrowserOpen;
+  useEffect(() => {
+    if (mode !== "form") return setFormBrowser(null);
+    if (!choosingFolders || formBrowser) return;
+    const start = activeField?.kind === "folders" && activeField.start ? activeField.start : cwd;
+    void loadBrowser(newBrowser(["/"], { dirsOnly: true }), start).then((browser) =>
+      setFormBrowser((current) => current ?? browser),
+    );
+  }, [mode, choosingFolders, formBrowser, cwd]);
+
+  /** As teclas de navegar vão para o navegador; tab, ctrl+s e esc seguem para o formulário. */
+  const handleFolderField = (input: string, key: InkKey): boolean => {
+    const current = formRef.current;
+    const field = current?.fields[current.index];
+    const browser = formBrowserRef.current;
+    if (!current || !browser || !formBrowserOpen || field?.kind !== "folders") return false;
+    if (key.tab || (key.ctrl && input === "s")) return false;
+    const toggle = (path: string) => {
+      const chosen = field.value;
+      const value = chosen.includes(path) ? chosen.filter((entry) => entry !== path) : field.single ? [path] : [...chosen, path];
+      setForm(setFieldValue(current, field.key, value));
+    };
+    // Espaço escolhe (de novo, desmarca); enter e → entram na pasta; esc fecha a lista.
+    const action = browserKey(browser, input, key, Math.max(formBrowserArea.height - 1, 1));
+    if (action.type === "state") setFormBrowser(action.browser);
+    else if (action.type === "load") void loadBrowser(action.browser, action.dir, action.select).then(setFormBrowser);
+    else if (action.type === "mark") toggle(action.entry.path);
+    else if (action.type === "close") setFormBrowserOpen(false);
+    else return false;
+    return true;
+  };
+
   const handleForm = (input: string, key: InkKey) => {
+    const form = formRef.current;
     if (!form || form.busy) return;
+    if (form.fields[form.index]?.kind === "folders" && !formBrowserOpen && key.rightArrow) return setFormBrowserOpen(true);
+    // Excluir: ctrl+d pede confirmação; o segundo ctrl+d exclui; qualquer outra tecla desiste.
+    if (form.remove && key.ctrl && input === "d") {
+      if (!form.confirmingRemove) return setForm({ ...form, confirmingRemove: true, error: undefined });
+      const removing = { ...form, busy: true, confirmingRemove: false };
+      setForm(removing);
+      return void form.remove.run().then(
+        () => closeForm(),
+        (error: Error) => setForm({ ...removing, busy: false, error: error.message }),
+      );
+    }
+    if (form.confirmingRemove) return setForm({ ...form, confirmingRemove: false });
+    if (handleFolderField(input, key)) return;
     const action = formKey(form, input, key);
     if (action.type === "cancel") return closeForm();
     if (action.type === "state") return setForm(action.form);
@@ -573,11 +865,23 @@ export function App({
     form.submit(valuesOf(form)).then(
       () => {
         closeForm();
+        // Criou um agente ou grupo: vai direto para a conversa dele (cancelar volta de onde veio).
+        if (wantSelect.current) setFocus("main");
         void refreshState();
       },
       (error: Error) => setForm({ ...submitting, busy: false, error: error.message }),
     );
   };
+
+  const openPage = (kind: "dashboard" | "integrations") => {
+    const at = items.findIndex((candidate) => candidate.kind === kind);
+    if (at < 0) return;
+    setSelected(at);
+    setMode("chat");
+    setFocus("main");
+  };
+  const openDashboard = () => openPage("dashboard");
+  const openIntegrations = () => openPage("integrations");
 
   const activate = () => {
     if (!item) return;
@@ -595,6 +899,11 @@ export function App({
     if (input === "n") return openAgentForm();
     if (input === "g") return openGroupForm();
     if (input === "r") return openRoutines();
+    if (input === "s" && item?.kind === "agent") return openProcesses();
+    if (input === "d") return openDashboard();
+    if (input === "?") return openHelp();
+    if (input === "i") return openIntegrations();
+    if (input === "e" && (item?.kind === "agent" || item?.kind === "group")) return openEditForm({ kind: item.kind, slug: item.slug });
     if (input === "p" && item?.kind === "agent") {
       const paused = state?.agents.find((agent) => agent.slug === item.slug)?.state === "paused";
       return run(api.setPaused(item.slug, !paused), paused ? `${item.slug} retomado` : `${item.slug} pausado: rotinas e retornos esperam`);
@@ -614,7 +923,7 @@ export function App({
       const at = target ? items.findIndex((candidate) => sameItem(candidate, target)) : -1;
       if (at >= 0) {
         setSelected(at);
-        setMode(attentionItem.routineId ? "routines" : "chat");
+        setMode(attentionItem.routineId ? "routines" : attentionItem.kind === "idle_services" ? "processes" : "chat");
         if (attentionItem.routineId) void loadRoutines();
         setFocus("main");
       }
@@ -748,23 +1057,13 @@ export function App({
   const [picker, setPicker] = useState<Picker | null>(null);
   const pickerRef = useRef(picker);
   pickerRef.current = picker;
-  const pickerTop = useRef(0);
   const pickerAreaRef = useRef<DOMElement>(null);
   const pickerArea = useBoxMetrics(pickerAreaRef);
-  const pickerVisible = picker ? (picker.filter === null ? picker.entries : filterEntries(picker.entries, picker.filter)) : [];
 
-  /** Abre uma pasta do escopo (ou o topo, com `null`), deixando selecionado `select`, se vier. */
-  const loadDir = async (base: Picker, dir: string | null, select?: string) => {
-    let entries: Entry[] = [];
-    let error: string | undefined;
-    try {
-      entries = dir === null ? rootEntries(base.roots) : await listDir(dir, base.hidden);
-    } catch (problem) {
-      error = (problem as NodeJS.ErrnoException).code === "EACCES" || (problem as NodeJS.ErrnoException).code === "EPERM" ? "sem permissão para ler esta pasta" : (problem as Error).message;
-    }
-    const index = Math.max(select ? entries.findIndex((entry) => entry.path === select) : 0, 0);
-    pickerTop.current = 0;
-    setPicker((current) => (current && current.scope === base.scope ? { ...current, dir, entries, index, filter: null, error } : current));
+  /** Abre uma pasta no navegador do :path, se ele ainda for o da mesma conversa. */
+  const pickerLoad = async (from: Browser, dir: string | null, select?: string) => {
+    const browser = await loadBrowser(from, dir, select);
+    setPicker((current) => (current ? { ...current, browser } : current));
   };
 
   const openPicker = () => {
@@ -776,10 +1075,10 @@ export function App({
         ? (state?.agents.find((agent) => agent.slug === scope.slug)?.folders ?? [])
         : [state?.groups.find((group) => group.slug === scope.slug)?.folder].filter((folder): folder is string => Boolean(folder));
     if (roots.length === 0) return say("esta conversa não tem pastas");
-    const base: Picker = { scope: currentKey, roots, workspace: roots[0]!, dir: null, entries: [], index: 0, filter: null, hidden: false };
-    setPicker(base);
+    const browser = newBrowser(roots);
+    setPicker({ scope: currentKey, workspace: roots[0]!, browser });
     setFocus("files");
-    void loadDir(base, roots.length === 1 ? roots[0]! : null);
+    void pickerLoad(browser, roots.length === 1 ? roots[0]! : null);
   };
   const closePicker = () => {
     setPicker(null);
@@ -804,57 +1103,14 @@ export function App({
     closePicker();
   };
 
-  const openEntry = (entry: Entry | undefined) => {
-    if (!picker || !entry) return;
-    if (entry.dir) return void loadDir(picker, entry.path);
-    insertReference(entry.path);
-  };
-  const goUp = () => {
-    if (!picker || picker.dir === null) return;
-    const parent = parentOf(picker.dir, picker.roots);
-    if (parent !== null) return void loadDir(picker, parent, picker.dir);
-    // Na raiz de uma das pastas: sobe para a lista delas, se houver mais de uma.
-    if (picker.roots.length > 1) void loadDir(picker, null, picker.dir);
-  };
-  const movePicker = (step: number) =>
-    setPicker((current) => {
-      if (!current) return current;
-      const count = (current.filter === null ? current.entries : filterEntries(current.entries, current.filter)).length;
-      return { ...current, index: Math.min(Math.max(current.index + step, 0), Math.max(count - 1, 0)) };
-    });
-
   const handlePicker = (input: string, key: InkKey) => {
     if (!picker) return;
-    const selected = pickerVisible[Math.min(picker.index, pickerVisible.length - 1)];
-    if (key.upArrow) return movePicker(-1);
-    if (key.downArrow) return movePicker(1);
-    if (key.pageUp) return movePicker(-Math.max(pickerArea.height - 1, 1));
-    if (key.pageDown) return movePicker(Math.max(pickerArea.height - 1, 1));
-    if (key.return) return openEntry(selected);
     if (key.tab) return setFocus("main");
-    // Filtrando (o / do nvim): as letras vão para o filtro; esc desfaz.
-    if (picker.filter !== null) {
-      if (key.escape) return setPicker({ ...picker, filter: null, index: 0 });
-      if (key.backspace || key.delete) {
-        return setPicker({ ...picker, filter: picker.filter ? [...picker.filter].slice(0, -1).join("") : null, index: 0 });
-      }
-      if (input && !key.ctrl && !key.meta) return setPicker({ ...picker, filter: picker.filter + input, index: 0 });
-      return;
-    }
-    if (key.escape || input === "q") return closePicker();
-    if (input === "j") return movePicker(1);
-    if (input === "k") return movePicker(-1);
-    if (input === "g") return movePicker(-Number.MAX_SAFE_INTEGER);
-    if (input === "G") return movePicker(Number.MAX_SAFE_INTEGER);
-    if (input === "l" || key.rightArrow) return openEntry(selected);
-    if (input === "h" || input === "-" || key.leftArrow || key.backspace || key.delete) return goUp();
-    if (input === "/") return setPicker({ ...picker, filter: "", index: 0 });
-    if (input === " " && selected) return insertReference(selected.path);
-    if (input === ".") {
-      const next = { ...picker, hidden: !picker.hidden };
-      setPicker(next);
-      return void loadDir(next, picker.dir, selected?.path);
-    }
+    const action = browserKey(picker.browser, input, key, Math.max(pickerArea.height - 1, 1));
+    if (action.type === "state") return setPicker({ ...picker, browser: action.browser });
+    if (action.type === "load") return void pickerLoad(action.browser, action.dir, action.select);
+    if (action.type === "choose" || action.type === "mark") return insertReference(action.entry.path);
+    if (action.type === "close") return closePicker();
   };
 
   usePaste(paste, { isActive: mode === "chat" && focus === "main" && scope !== null });
@@ -864,11 +1120,23 @@ export function App({
 
   useInput((input, key) => {
     if (mode === "form") return handleForm(input, key);
+    if (mode === "help") {
+      if (key.escape || key.return || input === "q" || input === "?") return closeHelp();
+      if (input === "j" || key.downArrow || key.pageDown) return scrollPage(key.pageDown ? Math.max(viewport.height - 2, 1) : 1);
+      if (input === "k" || key.upArrow || key.pageUp) return scrollPage(key.pageUp ? -Math.max(viewport.height - 2, 1) : -1);
+      return;
+    }
     if (focus === "notes" && notes) return handleNotes(input, key);
     if (focus === "files" && picker) return handlePicker(input, key);
     if (focus === "sidebar") return handleSidebar(input, key);
     if (mode === "routines") return handleRoutines(input, key);
+    if (mode === "processes") return handleProcesses(input, key);
     if (mode === "attention") return handleAttention(input, key);
+    if (isPage) {
+      if (input === "j" || key.pageDown) return scrollPage(key.pageDown ? Math.max(viewport.height - 2, 1) : 1);
+      if (input === "k" || key.pageUp) return scrollPage(key.pageUp ? -Math.max(viewport.height - 2, 1) : -1);
+      if (isIntegrations && input === "r") return loadIntegrations(true);
+    }
     if (!scope) {
       if (key.escape || key.tab) return setFocus("sidebar");
       if (key.upArrow) return move(-1);
@@ -887,7 +1155,7 @@ export function App({
     const prompt = (first: boolean) => h(Text, { color: typing ? theme.accent : theme.muted, bold: true }, first ? "> " : "  ");
     let lines: ReactNode[];
     if (!draft.text) {
-      const hint = scope?.kind === "group" ? "mensagem para o grupo · @nome chama um agente" : `mensagem para ${scope?.slug} · /ajuda`;
+      const hint = scope?.kind === "group" ? "mensagem para o grupo · @nome chama um agente" : `mensagem para ${scope?.slug} · :ajuda`;
       lines = [
         h(Text, { key: "hint", wrap: "truncate-end" }, prompt(true), typing ? h(Text, { inverse: true }, " ") : null, h(Text, { color: theme.muted }, hint)),
       ];
@@ -911,56 +1179,14 @@ export function App({
 
   /** O navegador de arquivos, à direita da conversa, no lugar das notas enquanto está aberto. */
   function renderPicker(open: Picker): ReactNode {
-    const focused = focus === "files";
-    const height = Math.max(pickerArea.height, 1);
-    const index = Math.min(open.index, Math.max(pickerVisible.length - 1, 0));
-    let top = Math.min(pickerTop.current, Math.max(pickerVisible.length - height, 0));
-    if (index < top) top = index;
-    if (index >= top + height) top = index - height + 1;
-    pickerTop.current = top;
-    const width = Math.max(Math.floor(mainWidth * 0.4), 28) - 2;
-    const lines: ReactNode[] = open.error
-      ? [h(Text, { key: "error", color: theme.red, wrap: "wrap" }, open.error)]
-      : pickerVisible.length === 0
-        ? [h(Text, { key: "empty", color: theme.muted }, open.filter ? "nada com esse nome" : "pasta vazia")]
-        : pickerVisible.slice(top, top + height).map((entry, at) => {
-            const active = top + at === index;
-            const bg = active ? { backgroundColor: theme.selected } : {};
-            const name = open.dir === null ? entry.path.replace(homedir(), "~") : entry.name;
-            const label = entry.dir ? `▸ ${name}/` : `  ${name}`;
-            return h(
-              Text,
-              { key: entry.path, wrap: "truncate-end", ...bg },
-              h(Text, { ...bg }, active && focused ? "▌" : " "),
-              h(Text, { color: entry.dir ? theme.accent : undefined, bold: active, ...bg }, label.padEnd(width - 1)),
-            );
-          });
-    return h(
-      Box,
-      {
-        width: Math.max(Math.floor(mainWidth * 0.4), 28),
-        flexShrink: 0,
-        flexDirection: "column",
-        marginLeft: 1,
-        paddingLeft: 1,
-        borderStyle: "single",
-        borderTop: false,
-        borderBottom: false,
-        borderRight: false,
-        borderColor: focused ? theme.accent : theme.border,
-      },
-      h(
-        Text,
-        { wrap: "truncate-start" },
-        h(Text, { bold: true, color: focused ? theme.accent : undefined }, "ARQUIVOS"),
-        h(Text, { color: theme.muted }, ` · ${displayPath(open.dir, open.roots)}${open.hidden ? " · com ocultos" : ""}`),
-      ),
-      open.filter !== null
-        ? h(Text, { wrap: "truncate-start" }, h(Text, { color: theme.accent }, "/"), open.filter, focused ? h(Text, { inverse: true }, " ") : null)
-        : null,
-      h(Box, { ref: pickerAreaRef, flexDirection: "column", flexGrow: 1, flexShrink: 1, flexBasis: 0, overflow: "hidden", marginTop: 1 }, ...lines),
-      h(Text, { color: theme.muted, wrap: "truncate-end" }, "enter abre · h sobe · / filtra · esc fecha"),
-    );
+    return renderBrowser(open.browser, {
+      title: "ARQUIVOS",
+      width: Math.max(Math.floor(mainWidth * 0.4), 28),
+      height: pickerArea.height,
+      focused: focus === "files",
+      areaRef: pickerAreaRef,
+      footer: "enter abre · h sobe · / filtra · esc fecha",
+    });
   }
 
   /** O painel das notas, à direita da conversa. */
@@ -1009,8 +1235,7 @@ export function App({
   const row = (key: string, active: boolean, left: ReactNode[], leftText: string, right = "", rightColor: string = theme.muted) => {
     const space = Math.max(inner - [...leftText].length - [...right].length, 1);
     const bg = active ? { backgroundColor: theme.selected } : {};
-    // Um respiro de uma linha entre os itens do menu.
-    return h(Box, { key, flexShrink: 0, marginBottom: 1 }, h(
+    return h(Box, { key, flexShrink: 0 }, h(
       Text,
       { wrap: "truncate-end", ...bg },
       h(Text, { ...bg }, active && focus === "sidebar" ? "▌" : " "),
@@ -1084,6 +1309,10 @@ export function App({
       });
     }
     sidebar.push(h(Box, { key: "spacer", flexGrow: 1 }));
+    const dashboardAt = items.findIndex((candidate) => candidate.kind === "dashboard");
+    sidebar.push(row("dashboard", dashboardAt === index, [h(Text, { color: theme.accent }, "◆"), " painel"], "◆ painel", "d", theme.accent));
+    const integrationsAt = items.findIndex((candidate) => candidate.kind === "integrations");
+    sidebar.push(row("integrations", integrationsAt === index, [h(Text, { color: theme.accent }, "◆"), " integrações"], "◆ integrações", "i", theme.accent));
     const newAgentAt = items.findIndex((candidate) => candidate.kind === "new-agent");
     const newGroupAt = items.findIndex((candidate) => candidate.kind === "new-group");
     sidebar.push(row("new-agent", newAgentAt === index, [h(Text, { color: theme.accent }, "+"), " novo agente"], "+ novo agente", "n", theme.accent));
@@ -1097,15 +1326,28 @@ export function App({
   const title = (text: string) => h(Text, { bold: true, color: theme.onAccent, backgroundColor: theme.accent }, ` ${text} `);
   let headerLeft: ReactNode = title("neoterm");
   let headerRight: ReactNode = null;
-  if (mode === "form" && form) {
+  if (mode === "help") {
+    headerLeft = title("ajuda");
+    headerRight = h(Text, { color: theme.muted }, "esc volta");
+  } else if (mode === "form" && form) {
     headerLeft = h(Text, null, h(Text, { bold: true }, form.title), form.subtitle ? h(Text, { color: theme.muted }, ` · ${form.subtitle}`) : null);
+  } else if (isIntegrations) {
+    headerLeft = h(Text, null, title("integrações"), h(Text, { color: theme.muted }, " · MCP, pelo Claude Code"));
+    headerRight = h(
+      Text,
+      { color: theme.muted },
+      integrationsLoading ? "verificando…" : integrations ? `verificado ${clock(integrations.checkedAt, timeZone)} · r verifica de novo` : "",
+    );
+  } else if (isDashboard) {
+    headerLeft = title("painel");
+    headerRight = h(Text, { color: theme.muted }, dashboard ? `atualizado ${clock(dashboard.generatedAt, timeZone)} · a cada 5 s` : "carregando…");
   } else if (mode === "attention") {
     headerLeft = h(Text, { bold: true, color: theme.amber }, "precisa de você");
   } else if (agentState) {
     headerLeft = h(
       Text,
       null,
-      title(mode === "routines" ? `rotinas · ${agentState.slug}` : agentState.slug),
+      title(mode === "routines" ? `rotinas · ${agentState.slug}` : mode === "processes" ? `processos · ${agentState.slug}` : agentState.slug),
       agentState.title ? h(Text, { color: theme.muted }, ` · ${agentState.title}`) : null,
       agentState.folders[0]
         ? h(
@@ -1115,12 +1357,16 @@ export function App({
           )
         : null,
     );
+    // A memória que ele está usando: o turno e os serviços que deixou rodando.
+    const memory = processes && processes.totalBytes > 0 ? ` · ${bytes(processes.totalBytes)}` : "";
+    const leftOver = processes?.processes.filter((entry) => entry.kind === "service" && !entry.inTurn).length ?? 0;
+    const services = leftOver ? h(Text, { color: theme.amber }, ` · ◆ ${leftOver} ${leftOver === 1 ? "serviço" : "serviços"}`) : null;
     headerRight =
       agentState.state === "running"
-        ? h(Text, null, h(Text, { color: theme.green }, "● "), h(Text, { color: theme.muted }, "rodando"))
+        ? h(Text, null, h(Text, { color: theme.green }, "● "), h(Text, { color: theme.muted }, `rodando${memory}`), services)
         : agentState.state === "paused"
-          ? h(Text, { color: theme.amber }, "‖ pausado")
-          : h(Text, { color: theme.muted }, `○ livre${agentState.model ? ` · ${agentState.model}` : ""}`);
+          ? h(Text, null, h(Text, { color: theme.amber }, "‖ pausado"), h(Text, { color: theme.muted }, memory), services)
+          : h(Text, null, h(Text, { color: theme.muted }, `○ livre${memory || (agentState.model ? ` · ${agentState.model}` : "")}`), services);
   } else if (groupState) {
     headerLeft = h(
       Text,
@@ -1137,7 +1383,49 @@ export function App({
   const mainWidth = Math.max(columns - SIDEBAR_WIDTH - 3, 20);
   let body: ReactNode;
   if (mode === "form" && form) {
-    body = h(Box, { flexDirection: "column", paddingTop: 1 }, renderForm(form));
+    const formBody = h(
+      Box,
+      { flexDirection: "column", paddingTop: 1, flexGrow: 1, flexShrink: 1, flexBasis: 0 },
+      renderForm(form, {
+        viewportRef: formViewportRef,
+        contentRef: formContentRef,
+        overflowing: formContent.hasMeasured && formViewport.hasMeasured && formContent.height > formViewport.height,
+      }),
+    );
+    body =
+      choosingFolders && formBrowser && activeField?.kind === "folders"
+        ? h(
+            Box,
+            { flexDirection: "row", flexGrow: 1, flexShrink: 1, flexBasis: 0 },
+            formBody,
+            renderBrowser(formBrowser, {
+              title: "PASTAS",
+              width: Math.max(Math.floor(mainWidth * 0.4), 28),
+              height: formBrowserArea.height,
+              focused: true,
+              areaRef: formBrowserAreaRef,
+              footer: "espaço escolhe · → entra · ← sobe · esc fecha",
+              marked: new Set(activeField.value),
+            }),
+          )
+        : formBody;
+  } else if (mode === "help") {
+    body = h(
+      Box,
+      { ref: viewportRef, flexDirection: "column", flexGrow: 1, flexShrink: 1, flexBasis: 0, overflow: "hidden", contentOffsetY: Math.min(pageTop, maxScroll) },
+      h(Box, { ref: contentRef, flexDirection: "column", flexShrink: 0 }, renderHelp(mainWidth - 3)),
+    );
+  } else if (isPage) {
+    const content = isIntegrations
+      ? renderIntegrations(integrations, { loading: integrationsLoading, error: integrationsError })
+      : dashboard
+        ? renderDashboard(dashboard, { width: mainWidth - 3, timeZone })
+        : h(Text, { color: dashboardError ? theme.red : theme.muted }, dashboardError ? `não carreguei o painel: ${dashboardError}` : "carregando o painel…");
+    body = h(
+      Box,
+      { ref: viewportRef, flexDirection: "column", flexGrow: 1, flexShrink: 1, flexBasis: 0, overflow: "hidden", contentOffsetY: Math.min(pageTop, maxScroll) },
+      h(Box, { ref: contentRef, flexDirection: "column", flexShrink: 0 }, content),
+    );
   } else if (mode === "attention" && attentionItem) {
     const actions = attentionItem.group
       ? `enter abre #${attentionItem.group} · x dispensa`
@@ -1149,6 +1437,12 @@ export function App({
       { flexDirection: "column", paddingTop: 1 },
       h(Text, { wrap: "wrap" }, h(Text, { color: theme.amber }, "! "), attentionItem.text),
       h(Box, { marginTop: 1 }, h(Text, { color: theme.muted }, actions)),
+    );
+  } else if (mode === "processes" && scope) {
+    body = h(
+      Box,
+      { ref: viewportRef, flexDirection: "column", flexGrow: 1, flexShrink: 1, flexBasis: 0, overflow: "hidden" },
+      renderProcesses(processes, { index: processIndex, confirming: confirmStop, error: processesError, width: mainWidth - 3, expanded: processExpanded }),
     );
   } else if (mode === "routines" && scope) {
     const lines: ReactNode[] = [];
@@ -1205,14 +1499,14 @@ export function App({
     // e o streaming continua preso à conversa em andamento. Logo que um turno começa (ainda sem
     // nada escrito), a mensagem dele pode não ter chegado do motor: fica acima do indicador.
     const streaming = current !== undefined && current.parts.length > 0;
-    const waiting = (pending[currentKey] ?? []).map((text, position) =>
-      renderPerson(
-        { id: `pending-${position}`, author: "person", text, parts: [], meta: {}, createdAt: new Date().toISOString() },
-        inGroup,
-        timeZone,
-        streaming,
-      ),
-    );
+    const pendingTexts = pending[currentKey] ?? [];
+    const waiting = streaming
+      ? pendingTexts.length
+        ? [renderQueue(pendingTexts)]
+        : []
+      : pendingTexts.map((text, position) =>
+          renderPerson({ id: `pending-${position}`, author: "person", text, parts: [], meta: {}, createdAt: new Date().toISOString() }, inGroup, timeZone),
+        );
     const liveBlock = current
       ? h(
           Box,
@@ -1273,16 +1567,27 @@ export function App({
 
   // ---------- rodapé ----------
   let hints: string;
-  if (mode === "form") hints = "tab próximo · ←→ opções · espaço marca · enter avança · ctrl+s salva · esc cancela";
+  const removeHint = form?.remove ? " · ctrl+d exclui" : "";
+  if (mode === "form" && form?.confirmingRemove) {
+    hints = "ctrl+d de novo exclui · qualquer outra tecla desiste";
+  } else if (mode === "form" && choosingFolders) {
+    hints = "↑↓ anda · espaço escolhe · → entra · ← sobe · esc fecha a lista · tab próximo · ctrl+s salva";
+  } else if (mode === "form" && activeField?.kind === "folders") {
+    hints = `→ abre a lista · tab próximo · ctrl+s salva · esc cancela${removeHint}`;
+  } else if (mode === "form") hints = `tab próximo · ←→ opções · espaço marca · ctrl+s salva · esc cancela${removeHint}`;
   else if (focus === "files") {
-    hints = picker?.filter !== null
+    hints = picker?.browser.filter !== null
       ? "digite para filtrar · ↑↓ escolhe · enter abre · esc limpa o filtro"
-      : "j/k escolhe · enter/l abre ou insere · h sobe · espaço insere pasta · / filtra · . ocultos · tab conversa · esc fecha";
-  } else if (focus === "notes") hints = "enter nova linha · salva sozinho (ctrl+s agora) · tab volta à conversa · esc fecha";
-  else if (focus === "sidebar") hints = "↑↓ escolhe · enter abre · n novo agente · g novo grupo · r rotinas · p pausa · q sai";
+      : "↑↓ anda · → ou enter abre/insere · ← sobe · / filtra · tab conversa · esc fecha";
+  } else if (mode === "help") hints = "↑↓ ou roda do mouse rolam · esc volta";
+  else if (focus === "notes") hints = "salva sozinho · tab conversa · esc fecha";
+  else if (focus === "sidebar") hints = "↑↓ enter abre · e edita · n agente · g grupo · ? ajuda";
+  else if (isIntegrations) hints = "r verifica de novo · j/k rolam · esc lateral";
+  else if (isDashboard) hints = "j/k rolam · esc lateral";
+  else if (mode === "processes") hints = confirmStop ? `${confirmStop === "all" ? "X" : "x"} de novo encerra · qualquer outra tecla desiste` : "↑↓ escolhe · x encerra · X encerra todos · enter detalhe · esc volta";
   else if (mode === "routines") hints = "↑↓ escolhe · n nova · espaço liga/desliga · x roda agora · d apaga · esc volta";
   else if (mode === "attention") hints = "esc volta para a lateral";
-  else hints = `enter envia · ctrl+enter nova linha · ctrl+v imagem · ${notes ? ":notes volta às notas" : ":notes notas"} · esc lateral · ctrl+r rotinas`;
+  else hints = `enter envia · shift+enter nova linha · ${notes ? ":notas volta às notas · " : ""}esc lateral · :ajuda`;
   const usage = state?.planUsage;
   const plan = usage
     ? ` · plano${usage.fiveHour ? ` ${Math.round(usage.fiveHour.utilization * 100)}%` : ""}${usage.sevenDay ? ` · semana ${Math.round(usage.sevenDay.utilization * 100)}%` : ""}`

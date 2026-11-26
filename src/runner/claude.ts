@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { isAbsolute, relative } from "node:path";
 import { createInterface } from "node:readline";
-import { CLAUDE_BIN } from "../config.ts";
+import { createHash } from "node:crypto";
+import { CLAUDE_BIN, NEOTERM_HOME } from "../config.ts";
 
 /*
  * Um turno de um agente é uma execução do Claude Code oficial em modo não interativo (`claude -p`),
@@ -21,10 +22,28 @@ export type ClaudeTurn = {
   sessionId: string;
   /** Continuar a sessão `sessionId` em vez de começá-la. */
   resume: boolean;
+  /**
+   * O agente: vai no ambiente como NEOTERM_AGENT, e tudo o que ele rodar herda. É assim que o
+   * neoterm acha depois os processos que ele deixou rodando, mesmo órfãos.
+   */
+  agent?: string;
   /** O servidor MCP do neoterm e a chave desta execução. */
   mcp?: { url: string; token: string };
   signal?: AbortSignal;
 };
+
+/** A variável de ambiente que marca os processos de um agente: `<agente>@<instância>`. */
+export const AGENT_ENV = "NEOTERM_AGENT";
+
+/**
+ * Esta instância do neoterm (pela pasta dele), para dois neoterm na mesma máquina, ou os testes,
+ * não verem os processos um do outro.
+ */
+export const INSTANCE = createHash("sha256").update(NEOTERM_HOME).digest("hex").slice(0, 8);
+
+export function agentMarker(slug: string): string {
+  return `${slug}@${INSTANCE}`;
+}
 
 /** O nome com que as ferramentas do neoterm aparecem para o agente: mcp__neoterm__<nome>. */
 export const MCP_SERVER_NAME = "neoterm";
@@ -100,6 +119,7 @@ export function claudeArgs(turn: ClaudeTurn): string[] {
 export async function* runClaude(turn: ClaudeTurn): AsyncGenerator<ClaudeEvent> {
   const child = spawn(CLAUDE_BIN, claudeArgs(turn), {
     cwd: turn.cwd,
+    ...(turn.agent ? { env: { ...process.env, [AGENT_ENV]: agentMarker(turn.agent) } } : {}),
     stdio: ["pipe", "pipe", "pipe"],
     ...(turn.signal ? { signal: turn.signal } : {}),
   });
@@ -226,6 +246,8 @@ export function describeToolInput(name: string, input: unknown, cwd: string): st
   const path = pick("file_path", "notebook_path", "path");
   let detail: string;
   if (name.startsWith("mcp__")) {
+    // Uma consulta a outro agente: para quem e o quê.
+    if (pick("agent") && pick("question")) return truncate(firstLine(`→ ${pick("agent")}: ${pick("question")}`), 120);
     // As ferramentas do neoterm: o nome da rotina, o fato, o motivo; e o horário, se houver.
     const minutes = typeof input.minutes === "number" ? `em ${input.minutes} min` : undefined;
     detail = [pick("title", "routine", "fact", "text", "tool"), pick("cron"), minutes, pick("reason")]

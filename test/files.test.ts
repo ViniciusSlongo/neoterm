@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { displayPath, filterEntries, listDir, parentOf, referenceFor, rootEntries } from "../src/tui/files.ts";
 import { makeFolder } from "./harness.ts";
+import { displayPath, filterEntries, listDir, parentOf, referenceFor, rootEntries } from "../src/tui/files.ts";
 
 describe("navegador de arquivos", () => {
   const root = makeFolder("navegar");
@@ -44,6 +44,6 @@ describe("navegador de arquivos", () => {
   it("mostra onde está a partir do nome da pasta do escopo", () => {
     assert.equal(displayPath(join(root, "src", "tui"), [root]), "navegar/src/tui");
     assert.equal(displayPath(root, [root]), "navegar");
-    assert.equal(displayPath(null, [root]), "pastas do agente");
+    assert.equal(displayPath(null, [root]), "pastas");
   });
 });

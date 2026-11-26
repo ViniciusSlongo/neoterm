@@ -22,6 +22,17 @@ process.env.FAKE_CLAUDE_SCRIPT = SCRIPT_FILE;
 mkdirSync(HOME, { recursive: true });
 writeFileSync(join(HOME, "config.json"), JSON.stringify({ defaultModel: "claude-haiku-5-5", timezone: "America/Sao_Paulo" }));
 
+// Trava de segurança: se algum teste importou src/ antes deste arquivo, src/config.ts já leu os
+// caminhos de verdade (~/.neoterm, o banco real, o `claude` real) e o teste mexeria nos dados de
+// quem roda. Melhor não rodar nada.
+const config = await import("../src/config.ts");
+if (config.NEOTERM_HOME !== HOME || config.DATABASE_FILE !== process.env.NEOTERM_DATABASE || config.CLAUDE_BIN !== process.env.NEOTERM_CLAUDE_BIN) {
+  throw new Error(
+    "src/config.ts foi carregado antes do test/harness.ts e aponta para o ~/.neoterm de verdade. " +
+      "Importe o harness antes de qualquer coisa de src/ (ou importe src/ com await import depois dele).",
+  );
+}
+
 const { applyMigrations, connect } = await import("../src/db/client.ts");
 const { Neoterm } = await import("../src/app.ts");
 const { listen } = await import("../src/daemon/server.ts");
@@ -29,7 +40,7 @@ const { createAgent } = await import("../src/agents/identity.ts");
 
 export type TestNeoterm = Awaited<ReturnType<typeof startNeoterm>>;
 
-export async function startNeoterm(options: { now?: () => Date } = {}) {
+export async function startNeoterm(options: { now?: () => Date; askTimeoutMs?: number; idleMs?: number } = {}) {
   const connection = connect();
   await applyMigrations(connection);
   const neoterm = new Neoterm(connection.db, options);
