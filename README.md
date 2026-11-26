@@ -1,179 +1,94 @@
 # neoterm
 
-Agentes persistentes no terminal. Cada um tem identidade, função e as pastas do computador em que
-trabalha, roda rotinas sozinho e conversa com os colegas em grupos. Tudo roda pelo Claude Code do seu plano.
-Inspirado no [OpenBot](https://github.com/CopilotKit/OpenBot) (MIT).
+**Agentes persistentes no terminal, com o Claude Code do seu plano.**
 
-## Precisa de
+Cada agente tem identidade, função e as pastas do computador em que trabalha. Eles conversam com
+você, rodam rotinas sozinhos, consultam uns aos outros e trabalham juntos em grupos. Sem chave de
+API, sem servidor na nuvem: tudo roda no seu Mac, pelo `claude` que você já usa.
 
-- Node 24 ou mais novo (o neoterm usa o `node:sqlite` e roda TypeScript direto, sem build)
-- [Claude Code](https://code.claude.com) instalado e logado (`claude`, depois `/login`)
-
-Não precisa de Docker nem de banco externo: o banco é um arquivo SQLite em `~/.neoterm`.
+```
+ AGENTES               │  analista  · Financeiro · ~/Documents/Caixa      ○ livre · 77 MB
+ ● analista ⠹          │ ──────────────────────────────────────────────────────────────
+ ○ dev                 │  ┃ quanto entrou essa semana?
+ GRUPOS                │
+ # fechamento          │    ⎿ Read   extratos/novembro.csv
+ ROTINAS HOJE          │  ● Entraram R$ 48.200 em 12 recebimentos.
+ ✓ 09:00 resumo        │    • 8 por pix · 4 por boleto
+ PRECISA DE VOCÊ       │
+ ! rotina backup falhou│ ──────────────────────────────────────────────────────────────
+ ◆ painel            d │  > mensagem para analista · :ajuda
+ ◆ integrações       i │ ──────────────────────────────────────────────────────────────
+```
 
 ## Começar
 
-```sh
-npm install
-npm link                    # opcional: deixa o comando `neoterm` disponível
-neoterm init                # confere o Claude Code, cria ~/.neoterm e o banco
-neoterm service on          # liga o motor junto com o Mac (ou: neoterm daemon, num terminal)
-neoterm                     # abre a interface
-```
-
-Sem `npm link`, use `node src/cli/main.ts` no lugar de `neoterm`. Funciona de qualquer pasta: os
-dados ficam em `~/.neoterm`.
-
-## O motor
-
-O motor (`daemon`) dispara as rotinas e os retornos, roda os turnos dos agentes e toca os grupos. A
-interface e o CLI só conversam com ele, em `127.0.0.1:4777`. Fechar a interface não para nada.
+Precisa de **macOS**, **Node 24+** e o **[Claude Code](https://code.claude.com)** instalado e logado
+(`claude`, depois `/login`).
 
 ```sh
-neoterm service on          # liga junto com o Mac, pelo launchd
-neoterm service status      # está rodando? com qual pid?
-neoterm service restart     # depois de atualizar o código do neoterm
-neoterm service off         # para e não liga mais sozinho
-neoterm daemon              # ou: roda neste terminal, até o ctrl+c
+git clone https://github.com/ViniciusSlongo/neoterm.git
+cd neoterm && npm install && npm link
+
+neoterm init          # confere o Claude Code e cria ~/.neoterm
+neoterm service on    # liga o motor (e sempre que você entrar no Mac)
+neoterm               # abre a interface
 ```
 
-- **Quando sobe:** quando você entra na sua conta do Mac, não antes. O Claude Code lê o seu login
-  nas Chaves, que só abrem com você logado. Se o motor cair, o launchd liga de novo.
-- **Com o Mac dormindo nada roda.** Horários perdidos são pulados, como com o motor desligado.
-- **Ambiente:** o serviço usa o `node`, o `claude` e o PATH do terminal onde você rodou
-  `neoterm service on`. Mudou de lugar algum deles (outro Node, outro PATH)? Rode `on` de novo.
-- **Log:** `~/.neoterm/daemon.log`.
-- **Pastas protegidas do macOS** (Documentos, Mesa, Downloads, iCloud): rodando pelo launchd, quem
-  acessa é o `node`, não o seu terminal. O macOS pode pedir permissão na primeira vez ou bloquear.
-  Se um agente não conseguir ler uma pasta dessas, libere o `node` em Ajustes do Sistema →
-  Privacidade e Segurança → Acesso Total ao Disco.
+Na interface, `n` cria o primeiro agente: nome, função e as pastas dele. Depois é só conversar.
 
-## A interface
+## O que dá para fazer
 
-```
- AGENTES            │ analista · Financeiro · ~/Documents/Caixa   ○ livre
- ● analista         │ ──────────────────────────────────────────────────
- ‖ suporte  pausado │ › quanto entrou essa semana?
- GRUPOS             │   ⎿ Read   extratos/novembro.csv
- # crm              │   Entraram R$ 48.200 em 12 recebimentos.
- ROTINAS HOJE       │
- ✓ 09:00 resumo     │ ╭─────────────────────────────────────────────────╮
- PRECISA DE VOCÊ    │ │ > mensagem para analista · /ajuda               │
- ! rotina resumo f… │ ╰─────────────────────────────────────────────────╯
-```
+- **Conversar** com cada agente, com imagens, markdown e uma fila para o que você manda enquanto ele
+  trabalha.
+- **Rotinas**: "todo dia útil às 18h, resume o caixa". O agente cria e roda sozinho.
+- **Grupos**: vários agentes num projeto, chamando uns aos outros com `@nome`.
+- **Consultas entre agentes**: um pergunta ao outro e espera a resposta, sem precisar de grupo.
+- **Memória e notas**: o que o agente lembra entre conversas, e as suas anotações sobre ele.
+- **Processos**: a memória de cada agente e os serviços que ele deixou rodando, para encerrar o
+  que sobrou.
+- **Painel**: motor, plano, máquina e o trabalho do dia, numa tela.
 
-- **Na conversa:** `enter` envia; `esc` vai para a lateral; `↑↓` (sem texto) troca de agente;
-  `pgup`/`pgdn` rola; `ctrl+r` abre as rotinas. Num grupo, `@nome` chama um agente.
-- **Na lateral:** `↑↓` escolhe; `enter` abre; `n` cria um agente; `g` cria um grupo; `r` abre as
-  rotinas; `p` pausa ou retoma; `q` sai.
-- **Nas rotinas:** `n` cria; `espaço` liga ou desliga; `x` roda agora; `d d` apaga.
-- **Em "precisa de você":** `enter` abre o assunto; `x` dispensa.
+Tudo também pelo terminal: `neoterm ask analista "quanto entrou hoje?"`.
 
-## O CLI
+## Documentação
 
 ```sh
-neoterm agents
-neoterm agent new analista --folder ~/Documents/Caixa --folder ~/Downloads/extratos \
-  --title "Acompanhamento financeiro" --role "Acompanha o caixa…"
-neoterm agent pause|resume analista
-neoterm agent reset analista        # mostra o que vai apagar e pede confirmação
-neoterm agent delete analista       # manda para ~/.neoterm/trash
-neoterm ask analista "quanto entrou hoje?"
-neoterm history analista            # ou: neoterm history '#crm'
-
-neoterm routines [analista]
-neoterm routine add analista --title resumo --cron "0 9 * * 1-5" --do "resuma os extratos" [--notify] [--group crm]
-neoterm routine run|on|off|rm <id>
-
-neoterm group new crm --folder ~/Projects/crm --members arquiteto,dev,revisor [--objective "…"]
-neoterm group say crm "precisamos de filtro por status"
-neoterm attention
+neoterm docs            # lista os tópicos
+neoterm docs agentes    # abre um
 ```
 
-## Onde fica cada coisa
-
-| O quê | Onde | Quem escreve |
+| | Tópico | |
 | --- | --- | --- |
-| Identidade, função e pastas | `~/.neoterm/agents/<nome>/AGENT.md` | você |
-| Memória do agente | `~/.neoterm/agents/<nome>/MEMORY.md` | o agente (`remember`/`forget`) e você |
-| O que todos sabem sobre você | `~/.neoterm/USER.md` | você |
-| Conversas, execuções, rotinas, grupos, avisos | `~/.neoterm/neoterm.db` (SQLite) | o motor |
-| Agentes excluídos | `~/.neoterm/trash/` | o motor |
+| 1 | [Começar](docs/01-comecar.md) | instalar, ligar e o primeiro agente |
+| 2 | [A interface](docs/02-interface.md) | as telas e como usar cada uma |
+| 3 | [Comandos e teclas](docs/03-comandos.md) | tudo numa página |
+| 4 | [Agentes](docs/04-agentes.md) | identidade, memória, consultas, processos |
+| 5 | [Rotinas e retornos](docs/05-rotinas.md) | trabalho que roda sozinho |
+| 6 | [Grupos](docs/06-grupos.md) | agentes trabalhando juntos |
+| 7 | [Pelo terminal](docs/07-terminal.md) | os comandos do `neoterm` |
+| 8 | [Segurança e privacidade](docs/08-seguranca.md) | o que fica onde, e o que um agente pode fazer |
+| 9 | [Quando algo não funciona](docs/09-problemas.md) | os problemas mais comuns |
+| 10 | [Desenvolvimento](docs/10-desenvolvimento.md) | código, testes, como contribuir |
 
-O `AGENT.md` é lido de novo a cada turno: editou, vale na próxima resposta.
+## Sem chaves, tudo local
 
-```markdown
----
-name: Analista
-title: Acompanhamento financeiro
-model: claude-opus-5-5           # opcional; sem isto, o padrão do neoterm init
-folders:                         # as pastas em que ele trabalha; roda na primeira
-  - "/Users/voce/Documents/Caixa"
-  - "/Users/voce/Downloads/extratos"
----
-Acompanhar o fluxo de caixa a partir dos extratos…
-```
+O neoterm **não tem nem guarda chave nenhuma**. Cada turno é o `claude -p` oficial, com o login que
+você fez no Claude Code (guardado nas Chaves do macOS). Agentes, conversas e memória ficam em
+`~/.neoterm`, fora do repositório, e o motor só ouve em `127.0.0.1`.
 
-As pastas são escolhidas na criação (pelo menos uma, já existindo) e o neoterm nunca cria nem apaga
-nada nelas. Excluir o agente não mexe nas pastas. Se uma pasta sumir, o agente aparece como problema
-até você corrigir o `AGENT.md`.
+Os agentes rodam **sem pedir permissão**, como o Claude Code com `--dangerously-skip-permissions`.
+As pastas que você escolhe são o escopo deles, mas são uma orientação, não uma trava. Leia
+[Segurança e privacidade](docs/08-seguranca.md) antes de dar a um agente uma pasta importante.
 
-## Como funciona
-
-**Cada turno é um `claude -p` oficial**, com o login que você já fez nele. O neoterm nunca lê nem
-guarda senha ou token.
-
-- **Identidade e contexto** vão em `--append-system-prompt`, montado a cada turno: quem ele é, a
-  função, as pastas, o que sabe de você, a memória e se tem alguém olhando. O neoterm passa `--system-prompt-snapshot off`, porque por padrão o Claude Code congela o
-  prompt de sistema na primeira mensagem e uma edição do `AGENT.md` não chegaria às conversas já
-  começadas.
-- **Sem permissões:** os agentes rodam com `--dangerously-skip-permissions`, como você rodaria o
-  Claude Code. Têm todas as ferramentas, inclusive sozinhos em rotinas, e nada pede confirmação.
-- **As pastas são o escopo:** ele roda na primeira, as outras entram com `--add-dir`, e o prompt diz
-  para trabalhar só nelas. É uma orientação, não uma trava: sem permissões, nada impede o agente de
-  ir além.
-- **Sua configuração pessoal fica de fora:** `--setting-sources project` e `--strict-mcp-config`
-  deixam de fora seus hooks, plugins e servidores MCP. A configuração da pasta vale, como valeria
-  para você ali: o `CLAUDE.md` e o `.claude/` do projeto.
-- **As ferramentas do neoterm** vêm por MCP, servidas pelo próprio motor: criar, listar, mudar e
-  apagar rotinas; agendar um retorno; lembrar e esquecer. Cada execução recebe uma
-  chave própria, que diz quem está chamando; o modelo não escolhe em nome de quem age.
-- **Avisos na conversa:** quando uma rotina falha, o próximo turno do agente começa com o aviso.
-- **Sessões:** o Claude Code guarda as conversas por pasta, então as sessões de um agente aparecem
-  no `claude --resume` da primeira pasta dele.
-- **Fila:** um agente faz um turno por vez, e um grupo fala um de cada vez.
-
-### Rotinas (regras do OpenBot)
-
-- Cron de 5 campos, com fuso; no máximo uma vez a cada 15 minutos; no máximo 20 ligadas.
-- **Agir** faz o que a rotina pede. **Só avisar** diz ao agente para verificar e informar sem mudar
-  nada.
-- Horários perdidos com o motor desligado são pulados, não repetidos (tolerância de 10 minutos).
-- **Regra do cansaço:** avisa na primeira falha e desliga depois de 10 falhas seguidas. Religar zera
-  a contagem.
-
-### Grupos
-
-- Um grupo é um projeto: uma pasta, uma conversa e os agentes. Cada um entra com a própria função,
-  roda na pasta do projeto e leva as pastas dele junto, com uma sessão própria nesse grupo.
-- Sem `@nome`, quem responde é o coordenador (o primeiro membro). Um agente que escreve `@colega`
-  passa a vez; `@você` para o grupo e te chama.
-- Freio único, sem configuração: depois de 30 falas seguidas de agentes sem você, o grupo para e te
-  chama.
-
-### Ciclo de vida
-
-- **Pausar:** segura rotinas, retornos e chamadas de colegas. A conversa com você continua.
-- **Recomeçar:** mostra o que vai apagar (conversas, rotinas, retornos, memória, sessões em grupos),
-  pede confirmação e mantém o `AGENT.md`.
-- **Excluir:** manda a pasta para a lixeira e libera o nome.
-
-## Testes
+## Desenvolvimento
 
 ```sh
-npm test            # 77 testes, com um "claude falso" (test/fixtures/fake-claude.mjs)
+npm test              # a suíte inteira, com um claude falso: não gasta o plano
 npm run typecheck
 ```
 
-O claude falso imita o `claude -p`: sessões, ferramentas, chamadas MCP de verdade, falhas e
-respostas roteirizadas por agente. Os testes não gastam o plano.
+Sem build: o Node 24 roda o TypeScript direto. Veja [Desenvolvimento](docs/10-desenvolvimento.md).
+
+---
+
+Inspirado no [OpenBot](https://github.com/CopilotKit/OpenBot).

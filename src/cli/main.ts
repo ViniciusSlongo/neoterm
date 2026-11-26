@@ -13,6 +13,7 @@ import { accent, bold, fail, green, indent, muted, ok, red, seconds, yellow } fr
 const HELP = `${bold("neoterm")} ${muted("· agentes no terminal, com o Claude Code do seu plano")}
 
   neoterm                               abre a interface
+  neoterm docs [tópico]                 a documentação: lista, ou abre um tópico
   neoterm init [--model <modelo>]       configura: Claude Code, banco, pastas
   neoterm daemon                        liga o motor neste terminal
   neoterm service on|off|status|restart liga o motor junto com o Mac
@@ -91,6 +92,11 @@ async function main(argv: string[]): Promise<number> {
       return groupCommand(rest);
     case "attention":
       return attentionCommand();
+    case "docs":
+    case "doc": {
+      const { docsCommand } = await import("./docs.ts");
+      return docsCommand(rest);
+    }
     case "help":
     case "--help":
     case "-h":

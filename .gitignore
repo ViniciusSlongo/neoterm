@@ -1,4 +1,23 @@
+# Dependências
 node_modules/
+
+# Nada de segredo ou dado pessoal no repositório. O neoterm não guarda chave nenhuma: usa o login
+# do Claude Code (nas Chaves do macOS), e os dados ficam em ~/.neoterm, fora daqui. Isto é só
+# uma rede de segurança para o caso de alguém copiar algo para cá.
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials*.json
+.claude/settings.local.json
+.mcp.json
+.neoterm/
+*.db
+*.db-shm
+*.db-wal
+
+# Sistema e logs
 *.log
 .DS_Store
