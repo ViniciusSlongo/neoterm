@@ -21,8 +21,8 @@ describe("docs", async () => {
   it("acha pelo nome, número, começo do nome ou título, sem ligar para acentos", () => {
     assert.equal(findDoc(docs, "agentes")?.name, "agentes");
     assert.equal(findDoc(docs, "1")?.name, "comecar");
-    assert.equal(findDoc(docs, "seg")?.name, "seguranca");
-    assert.equal(findDoc(docs, "segurança")?.name, "seguranca");
+    assert.equal(findDoc(docs, "rot")?.name, "rotinas");
+    assert.equal(findDoc(docs, "começar")?.name, "comecar");
     assert.equal(findDoc(docs, "nada-disso"), undefined);
   });
 

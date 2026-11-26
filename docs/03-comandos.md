@@ -1,94 +1,83 @@
 # Comandos e teclas
 
-> Tudo o que dá para digitar na conversa e as teclas de cada tela, numa página.
+> Tudo o que dá para digitar e apertar, numa página.
 
-## Comandos da conversa
+## Comandos
 
-Escreva na conversa, com `:` ou `/` na frente (`:notas` e `/notas` são o mesmo).
+Na conversa, com `:` ou `/` na frente.
 
 | Comando | Apelidos | O que faz |
 | --- | --- | --- |
-| `:ajuda` | `:help`, `:?` | comandos e teclas, numa tela |
-| `:notas` | `:notes` | suas anotações sobre o agente, à direita |
-| `:path` | `:arquivo` | escolhe um arquivo do escopo e põe o caminho na mensagem |
-| `:processos` | `:ps` | memória e serviços que o agente deixou rodando |
-| `:editar` | `:edit` | muda (ou exclui) o agente ou o grupo |
-| `:rotinas` | `:routines` | as rotinas desta conversa |
-| `:pausar` | `:pause` | pausa as rotinas e retornos do agente |
-| `:retomar` | `:resume` | volta a rodar o que foi pausado |
-| `:painel` | `:dash` | resumo do neoterm: motor, plano, agentes |
-| `:mcp` | `:integracoes` | integrações do Claude Code (só ver) |
-| `:config` | `:cor`, `:tema` | cor da interface e modelo padrão dos agentes |
-| `:selecionar` | `:sel` | modo seleção: selecione texto com o mouse e copie (`ctrl+s`) |
-| `:copiar` | `:copy` | copia a última resposta do agente (`ctrl+y`) |
-| `:esforço` | `:esforco`, `:effort` | mostra ou muda o esforço do agente: `:esforço alto` |
+| `:ajuda` | `:help`, `:?` | comandos e teclas |
+| `:notas` | `:notes` | notas do agente |
+| `:path` | `:arquivo` | insere o caminho de um arquivo |
+| `:processos` | `:ps` | memória e serviços do agente |
+| `:editar` | `:edit` | edita ou exclui o agente ou grupo |
+| `:esforço` | `:esforco`, `:effort` | mostra ou muda o esforço: `:esforço alto` |
+| `:rotinas` | `:routines` | rotinas da conversa |
+| `:pausar` | `:pause` | pausa rotinas e retornos do agente |
+| `:retomar` | `:resume` | volta a rodar |
+| `:painel` | `:dash` | painel |
+| `:mcp` | `:integracoes` | integrações |
+| `:config` | `:cor`, `:tema` | cor e modelo padrão |
+| `:selecionar` | `:sel` | modo seleção |
+| `:copiar` | `:copy` | copia a última resposta |
 
-Num grupo, `@nome` chama um agente e `@você` é para você.
-
-## Na conversa
+## Conversa
 
 | Tecla | O que faz |
 | --- | --- |
 | `enter` | envia |
 | `shift+enter` | nova linha (ou `option+enter`, `ctrl+j`) |
-| `ctrl+v` | cola uma imagem do clipboard |
-| `ctrl+n` | abre as notas; abertas, alterna com a conversa |
-| `ctrl+s` | modo seleção: arraste para selecionar, `cmd+c` copia, `esc` volta |
-| `ctrl+y` | copia a última resposta do agente |
-| `cmd+backspace` | apaga a palavra (também `option+backspace`, `ctrl+w`) |
-| `←→`, `option+←→` | anda pelo texto, por letra ou palavra |
-| `↑↓` | sobe e desce no texto; sem texto, troca de conversa |
-| roda do mouse, `pgup`/`pgdn` | rolam a conversa |
+| `ctrl+n` | notas |
+| `ctrl+s` | modo seleção |
+| `ctrl+y` | copia a última resposta |
+| `ctrl+v` | cola imagem |
+| `ctrl+r` | rotinas |
+| `cmd+backspace` | apaga a palavra |
+| `↑↓` sem texto | troca de conversa |
 | `esc` | vai para a lateral |
 
-## Na lateral
+## Lateral
 
 | Tecla | O que faz |
 | --- | --- |
-| `↑↓`, `enter` | escolhe e abre |
-| `e` | edita o agente ou grupo |
-| `s` | processos do agente |
+| `enter` | abre |
+| `e` | edita |
+| `s` | processos |
 | `r` | rotinas |
 | `p` | pausa ou retoma |
 | `n`, `g` | novo agente, novo grupo |
 | `d`, `i`, `c` | painel, integrações, config |
 | `?` | ajuda |
-| `q` | sai (o motor continua) |
-
-## Listas de arquivos e pastas
-
-| Tecla | O que faz |
-| --- | --- |
-| `↑↓` (ou `j`/`k`) | anda |
-| `→`, `enter` | entra na pasta; no `:path`, num arquivo, insere o caminho |
-| `←` | volta para a pasta de cima |
-| `espaço` | escolhe |
-| `/` | filtra pelo nome |
-| `.` | mostra os ocultos |
-| `~` | vai para a home (nos formulários) |
-| `esc` | fecha |
+| `q` | sai |
 
 ## Notas
 
 | Tecla | O que faz |
 | --- | --- |
-| `ctrl+t` | marca ou desmarca a tarefa da linha (ou transforma a linha em tarefa) |
-| `ctrl+p` | fixa ao lado: as notas ficam abertas em todo agente |
+| `ctrl+t` | cria ou marca tarefa |
+| `ctrl+p` | fixa ao lado |
 | `ctrl+n`, `tab` | volta à conversa |
-| `esc` | fecha (fixadas: volta à conversa) |
+| `esc` | fecha |
 
-## Formulários
+## Listas de pastas e arquivos
 
 | Tecla | O que faz |
 | --- | --- |
-| `tab`, `shift+tab` | próximo, anterior |
-| `ctrl+s` | salva |
-| `ctrl+d` duas vezes | exclui (na edição) |
-| `esc` | cancela |
+| `↑↓` | anda |
+| `→`, `enter` | entra (no `:path`, num arquivo, insere) |
+| `←` | volta |
+| `espaço` | escolhe |
+| `/` | filtra |
+| `.` | mostra ocultos |
+| `esc` | fecha |
 
 ## Outras telas
 
-- **Rotinas**: `n` nova, `espaço` liga e desliga, `x` roda agora, `d` duas vezes apaga.
-- **Processos**: `x` encerra o selecionado, `X` encerra todos os serviços (cada um pede a mesma
-  tecla de novo), `enter` mostra o comando inteiro.
-- **Precisa de você**: `enter` abre o assunto, `x` dispensa.
+| Tela | Teclas |
+| --- | --- |
+| Rotinas | `n` nova, `espaço` liga/desliga, `x` roda agora, `d d` apaga |
+| Processos | `x` encerra, `X` encerra todos, `enter` comando inteiro |
+| Config | `↑↓` prévia da cor, `enter` salva, `←→` modelo |
+| Formulários | `tab`, `ctrl+s` salva, `ctrl+d ctrl+d` exclui, `esc` cancela |

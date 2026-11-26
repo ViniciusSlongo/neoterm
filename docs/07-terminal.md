@@ -1,39 +1,32 @@
 # Pelo terminal
 
-> Os comandos do `neoterm` para usar sem abrir a interface, ou em scripts.
+> Os comandos do `neoterm`.
 
 ```sh
-neoterm                     # abre a interface
-neoterm docs [tópico]       # esta documentação
-neoterm help                # a lista curta de comandos
-```
-
-## Motor
-
-```sh
-neoterm init [--model <modelo>]     # configura: Claude Code, banco, pastas
+neoterm                          # interface
+neoterm docs [tópico]            # documentação
+neoterm init [--model <modelo>]  # prepara e testa
 neoterm service on|off|status|restart
-neoterm daemon                      # roda o motor neste terminal, até o ctrl+c
+neoterm daemon                   # motor neste terminal
 ```
 
 ## Agentes
 
 ```sh
 neoterm agents
-neoterm agent new analista --folder ~/Documents/Caixa --folder ~/Downloads/extratos \
-  --title "Acompanhamento financeiro" --role "Acompanha o caixa…" [--model <modelo>] [--effort high]
+neoterm agent new analista --folder ~/Documents/Caixa [--title …] [--role …] [--model …] [--effort high]
 neoterm agent pause|resume analista
-neoterm agent reset analista [--yes]     # recomeça do zero; mantém o AGENT.md
-neoterm agent delete analista [--yes]    # manda para ~/.neoterm/trash
+neoterm agent reset analista [--yes]
+neoterm agent delete analista [--yes]
 neoterm ask analista "quanto entrou hoje?"
-neoterm history analista [--limit 50]    # ou: neoterm history '#crm'
+neoterm history analista
 ```
 
 ## Rotinas
 
 ```sh
-neoterm routines [analista]
-neoterm routine add analista --title resumo --cron "0 9 * * 1-5" --do "resuma os extratos" [--notify] [--group crm]
+neoterm routines [agente]
+neoterm routine add analista --title resumo --cron "0 9 * * 1-5" --do "…" [--notify] [--group crm]
 neoterm routine run|on|off|rm <id>
 ```
 
@@ -41,12 +34,12 @@ neoterm routine run|on|off|rm <id>
 
 ```sh
 neoterm groups
-neoterm group new crm --folder ~/Projects/crm --members arquiteto,dev,revisor [--coordinator arquiteto] [--objective "…"]
-neoterm group say crm "precisamos de filtro por status"
+neoterm group new crm --folder ~/Projects/crm --members a,b,c [--coordinator a] [--objective "…"]
+neoterm group say crm "…"
 ```
 
-## O resto
+## Outros
 
 ```sh
-neoterm attention          # o que precisa de você
+neoterm attention                # o que precisa de você
 ```

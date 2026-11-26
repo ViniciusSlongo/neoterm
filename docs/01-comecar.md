@@ -1,56 +1,40 @@
 # Começar
 
-> Instalar, ligar o motor e criar o primeiro agente, em cinco minutos.
-
-## Precisa de
-
-- **macOS** (o serviço usa o launchd; a leitura de processos e do clipboard é do macOS)
-- **Node 24 ou mais novo**: o neoterm roda TypeScript direto, sem build
-- **[Claude Code](https://code.claude.com)** instalado e logado: rode `claude` e depois `/login`
-
-Não precisa de Docker, de banco externo nem de chave de API. O neoterm usa o login que você já fez no
-Claude Code, e os agentes gastam do seu plano.
+> Instalar, ligar e criar o primeiro agente.
 
 ## Instalar
 
+Precisa de macOS, Node 24+ e o [Claude Code](https://code.claude.com) logado (`claude`, depois `/login`).
+
 ```sh
 git clone https://github.com/ViniciusSlongo/neoterm.git
-cd neoterm
-npm install
-npm link          # deixa o comando `neoterm` disponível em qualquer pasta
+cd neoterm && npm install && npm link
 ```
 
-Sem `npm link`, use `node src/cli/main.ts` no lugar de `neoterm`.
-
-## Configurar e ligar
+## Ligar
 
 ```sh
-neoterm init          # confere o Claude Code, cria ~/.neoterm e o banco
-neoterm service on    # liga o motor agora e sempre que você entrar no Mac
-neoterm               # abre a interface
+neoterm init            # prepara ~/.neoterm e testa o Claude Code
+neoterm service on      # liga o motor (e sempre que você entrar no Mac)
+neoterm                 # abre a interface
 ```
 
-O **motor** é quem roda os agentes, as rotinas e os grupos. A interface só conversa com ele: fechar
-a interface não para nada. Prefere não deixar o motor como serviço? Rode `neoterm daemon` num
-terminal e deixe aberto.
+O motor roda os agentes. Fechar a interface não para nada.
 
-## O primeiro agente
+## Primeiro agente
 
-Na interface, aperte `n`:
+Na interface, `n`:
 
-1. **Nome**: o nome da pasta dele, em minúsculas (`analista`)
-2. **Título**: uma linha sobre o que ele faz (`Acompanhamento financeiro`)
-3. **Função**: o que ele faz em qualquer conversa, em texto livre (dá para mudar depois)
-4. **Pastas**: escolha na lista ao lado com `espaço` o escopo dele: só trabalha nelas
+1. **Nome**: `analista`
+2. **Título**: `Acompanhamento financeiro`
+3. **Função**: o que ele faz
+4. **Pastas**: `espaço` escolhe na lista ao lado
 5. `ctrl+s` salva
 
-Pronto: escreva na conversa. Para rotinas, grupos e o resto, veja `neoterm docs`.
+Depois é escrever na conversa.
 
 ## Atualizar
 
 ```sh
-cd neoterm && git pull && npm install
-neoterm service restart     # o motor passa a rodar o código novo
+git pull && npm install && neoterm service restart
 ```
-
-Depois, feche e abra a interface.
