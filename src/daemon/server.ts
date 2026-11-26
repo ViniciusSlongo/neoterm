@@ -11,6 +11,7 @@ import {
   loadAgent,
 } from "../agents/identity.ts";
 import { planReset, removeAgent, reset, setPaused } from "../agents/lifecycle.ts";
+import { NOTES_MAX_LENGTH, readNotes, writeNotes } from "../agents/notes.ts";
 import { Neoterm } from "../app.ts";
 import { resolveAttention } from "../attention.ts";
 import { DAEMON_PORT, readSettings } from "../config.ts";
@@ -40,6 +41,7 @@ import { runs } from "../db/schema.ts";
 
 const Text = z.object({ text: z.string().trim().min(1).max(100_000) });
 const Confirm = z.object({ confirm: z.literal(true) });
+const Notes = z.object({ text: z.string().max(NOTES_MAX_LENGTH) });
 const NewAgent = z.object({
   slug: z.string().min(1),
   name: z.string().optional(),
@@ -186,6 +188,13 @@ export function createApp(neoterm: Neoterm): Hono {
       }
       await writes;
     });
+  });
+  // As notas de quem usa sobre o agente (notas.txt na pasta dele).
+  app.get("/agents/:slug/notes", async (c) => c.json(await readNotes(c.req.param("slug"))));
+  app.put("/agents/:slug/notes", async (c) => {
+    const { text } = await body(c.req.raw, Notes);
+    await writeNotes(c.req.param("slug"), text);
+    return c.json({ ok: true });
   });
   app.post("/agents/:slug/pause", async (c) => {
     await setPaused(neoterm.core, c.req.param("slug"), true);

@@ -58,6 +58,9 @@ export interface NeotermApi {
   createAgent(input: NewAgentInput): Promise<void>;
   createGroup(input: NewGroupInput): Promise<void>;
   setPaused(slug: string, paused: boolean): Promise<void>;
+  /** As notas de quem usa sobre um agente: o texto e o arquivo onde ficam. */
+  notes(slug: string): Promise<{ text: string; path: string }>;
+  saveNotes(slug: string, text: string): Promise<void>;
   dismiss(attentionId: string): Promise<void>;
   /** Escuta o motor; reconecta sozinho. Devolve como parar. */
   subscribe(onEvent: (event: NeotermEvent) => void, onConnection: (connected: boolean) => void): () => void;
@@ -104,6 +107,8 @@ export function httpApi(base: string = DAEMON_URL): NeotermApi {
     createAgent: async (input) => void (await call("/agents", { body: { ...input, name: input.slug } })),
     createGroup: async (input) => void (await call("/groups", { body: input })),
     setPaused: async (slug, paused) => void (await call(`/agents/${slug}/${paused ? "pause" : "resume"}`, { body: {} })),
+    notes: (slug) => call<{ text: string; path: string }>(`/agents/${slug}/notes`),
+    saveNotes: async (slug, text) => void (await call(`/agents/${slug}/notes`, { method: "PUT", body: { text } })),
     dismiss: async (id) => void (await call(`/attention/${id}/resolve`, { body: {} })),
     subscribe(onEvent, onConnection) {
       let stopped = false;
