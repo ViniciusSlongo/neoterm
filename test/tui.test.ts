@@ -559,6 +559,40 @@ describe("a interface", () => {
     await t.api("/agents/analista/notes", { method: "PUT", body: { text: "" } });
   });
 
+  it(": abre o menu dos comandos, que afunila; enter roda, tab completa, esc fecha e deixa o :", async () => {
+    await type(":");
+    await seen("enter roda · tab completa · esc fecha");
+    await seen(/:ajuda\s+esta tela: comandos e teclas/);
+    // Afunila: "proc" deixa só o :processos, com o resumo ao lado.
+    await type("proc");
+    await seen(/:processos\s+memória e serviços/);
+    assert.doesNotMatch(frame(), /:ajuda\s+esta tela/);
+    await press(KEY.enter);
+    await seen(/processos · analista/);
+    await press(KEY.escape);
+    await seen("mensagem para analista");
+    // Com complemento: escreve o comando e espera o nível.
+    await type(":esf");
+    await press(KEY.enter);
+    await seen("> :esforço");
+    assert.doesNotMatch(frame(), /enter roda/);
+    await clearInput();
+    // tab completa sem rodar.
+    await type(":pai");
+    await press(KEY.tab);
+    await seen("> :painel");
+    await clearInput();
+    // esc fecha o menu e o ":" fica como texto.
+    await type(":");
+    await seen("enter roda");
+    await press(KEY.escape);
+    await waitFor(() => !frame().includes("enter roda"));
+    await seen("> :");
+    await type(")");
+    await press(KEY.enter);
+    await seen("┃ :)");
+  });
+
   it("troca de agente pela lateral", async () => {
     await press(KEY.escape);
     await press(KEY.down, KEY.enter);

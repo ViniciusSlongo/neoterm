@@ -38,3 +38,22 @@ describe("cor de destaque", async () => {
     assert.equal(theme.accent, DEFAULT_ACCENT);
   });
 });
+
+describe("menu dos comandos", async () => {
+  const { matchCommands } = await import("../src/tui/commands.ts");
+  const names = (query: string, agent = true) => matchCommands(query, { agent }).map((command) => command.name);
+  it("afunila pelo começo do nome ou de um apelido, depois pelo que contém", () => {
+    assert.equal(names("").length, COMMANDS.length);
+    assert.deepEqual(names("not"), ["notas"]);
+    assert.deepEqual(names("ps"), ["processos"]);
+    assert.deepEqual(names("esfor"), ["esforço"]);
+    assert.ok(names("a")[0] === "ajuda");
+    assert.deepEqual(names("xyz"), []);
+    assert.deepEqual(names("e"), ["editar", "esforço"]);
+    assert.deepEqual(names("cesso"), ["processos"]);
+  });
+  it("num grupo, esconde os comandos só de agente", () => {
+    assert.ok(!names("", false).includes("notas"));
+    assert.ok(names("", false).includes("editar"));
+  });
+});

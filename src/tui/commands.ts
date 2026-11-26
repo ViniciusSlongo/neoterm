@@ -12,6 +12,8 @@ export type Command = {
   description: string;
   /** Só na conversa com um agente. */
   agentOnly?: boolean;
+  /** Pede um complemento (o menu escreve o comando e espera o resto): o que vai depois. */
+  argument?: string;
 };
 
 export const COMMANDS: Command[] = [
@@ -26,8 +28,31 @@ export const COMMANDS: Command[] = [
   { name: "painel", aliases: ["dash"], description: "resumo do neoterm: motor, plano, agentes" },
   { name: "mcp", aliases: ["integracoes", "integrações"], description: "integrações do Claude Code (só ver)" },
   { name: "config", aliases: ["cor", "tema"], description: "cor da interface e modelo padrão dos agentes" },
-  { name: "esforço", aliases: ["esforco", "effort"], description: "esforço do agente: :esforço alto (baixo, médio, alto, muito alto, máximo, padrão)", agentOnly: true },
+  {
+    name: "esforço",
+    aliases: ["esforco", "effort"],
+    description: "esforço do agente: :esforço alto (baixo, médio, alto, muito alto, máximo, padrão)",
+    agentOnly: true,
+    argument: "baixo · médio · alto · muito alto · máximo · padrão",
+  },
 ];
+
+const fold = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+/**
+ * Os comandos para o menu do ":", afunilando pelo que já foi digitado: os que começam com o texto
+ * (no nome ou num apelido) e, a partir de 3 letras, os que o contêm.
+ */
+export function matchCommands(query: string, options: { agent: boolean }): Command[] {
+  const wanted = fold(query);
+  const available = COMMANDS.filter((command) => options.agent || !command.agentOnly);
+  const words = (command: Command) => [command.name, ...command.aliases].map(fold);
+  const starts = available.filter((command) => words(command).some((word) => word.startsWith(wanted)));
+  // No meio do nome, só a partir de 3 letras: com uma ou duas, quase tudo contém.
+  const contains =
+    wanted.length >= 3 ? available.filter((command) => !starts.includes(command) && words(command).some((word) => word.includes(wanted))) : [];
+  return [...starts, ...contains];
+}
 
 /** O comando digitado (":notas", "/ps", ":?"), ou `null` se o texto é uma mensagem. */
 export function parseCommand(text: string): CommandName | null {

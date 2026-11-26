@@ -4,7 +4,16 @@
 
 ## Comandos
 
-Na conversa, com `:` ou `/` na frente.
+Digite `:` na conversa: abre o menu dos comandos, que afunila conforme você escreve.
+
+| Tecla | No menu |
+| --- | --- |
+| `↑↓` | escolhe |
+| `enter` | roda |
+| `tab` | completa sem rodar |
+| `esc` | fecha (o `:` fica como texto) |
+
+Também dá para escrever o comando inteiro, com `:` ou `/` na frente.
 
 | Comando | Apelidos | O que faz |
 | --- | --- | --- |

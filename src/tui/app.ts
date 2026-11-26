@@ -18,7 +18,7 @@ import { clipboardImage, expandImages, pastedImages, shortenImages } from "./ima
 import { type Browser, browserKey, load as loadBrowser, newBrowser, renderBrowser } from "./browser.ts";
 import { referenceFor } from "./files.ts";
 import { renderMarkdown } from "./markdown.ts";
-import { EFFORT_LABEL, parseCommand, parseEffortCommand } from "./commands.ts";
+import { type Command, EFFORT_LABEL, matchCommands, parseCommand, parseEffortCommand } from "./commands.ts";
 import { renderHelp } from "./help.ts";
 import { CONFIG_ROWS, CUSTOM_ROW, MODEL_OPTIONS, MODEL_ROW, renderConfig } from "./config.ts";
 import { ACCENTS, DEFAULT_ACCENT, isHexColor, setAccent } from "./theme.ts";
@@ -842,15 +842,16 @@ export function App({
     edit((current) => editor.insert(current, text.replace(/\r\n?/g, "\n")));
   };
 
-  const send = () => {
+  /** Envia o rascunho, ou `override` (o comando escolhido no menu do ":"). */
+  const send = (override?: string) => {
     // :path no fim de uma mensagem começada abre o navegador sem enviar: o arquivo entra ali.
-    const typed = draft.text.trimEnd();
+    const typed = (override ?? draft.text).trimEnd();
     if (scope && /(^|\s):path$/.test(typed)) {
       const kept = typed.slice(0, -":path".length);
       setDraft({ text: kept, cursor: [...kept].length });
       return openPicker();
     }
-    const text = expandImages(draft.text, images.current).trim();
+    const text = override ?? expandImages(draft.text, images.current).trim();
     if (!text || !scope) return;
     clearDraft();
     // :esforço [nível]: sem nível, diz o atual; com nível, muda o do agente.
@@ -1069,7 +1070,70 @@ export function App({
     }
   };
 
+  // ---------- menu dos comandos (":") ----------
+  // Digitar ":" no começo abre a lista dos comandos, afunilando conforme se escreve. Esc fecha e
+  // deixa o ":" como texto; o menu volta quando o rascunho deixa de começar com ":".
+  const [commandIndex, setCommandIndex] = useState(0);
+  const [commandMenuClosed, setCommandMenuClosed] = useState(false);
+  const commandQuery = /^:(\S*)$/.exec(draft.text)?.[1];
+  const commandMatches = useMemo(
+    () => (commandQuery === undefined ? [] : matchCommands(commandQuery, { agent: scope?.kind === "agent" })),
+    [commandQuery, scope?.kind],
+  );
+  const commandMenuOpen = mode === "chat" && focus === "main" && !commandMenuClosed && commandMatches.length > 0;
+  useEffect(() => setCommandIndex(0), [commandQuery]);
+  useEffect(() => {
+    if (!draft.text.startsWith(":")) setCommandMenuClosed(false);
+  }, [draft.text]);
+  const chooseCommand = (command: Command | undefined) => {
+    if (!command) return;
+    // Com complemento (o nível do esforço): escreve o comando e espera o resto.
+    if (command.argument) return setDraft({ text: `:${command.name} `, cursor: [...`:${command.name} `].length });
+    send(`:${command.name}`);
+  };
+  const handleCommandMenu = (input: string, key: InkKey): boolean => {
+    if (!commandMenuOpen) return false;
+    const chosen = commandMatches[Math.min(commandIndex, commandMatches.length - 1)];
+    if (key.escape) return setCommandMenuClosed(true), true;
+    if (key.upArrow) return setCommandIndex((value) => Math.max(value - 1, 0)), true;
+    if (key.downArrow) return setCommandIndex((value) => Math.min(value + 1, commandMatches.length - 1)), true;
+    if (key.tab && chosen) {
+      const text = `:${chosen.name}${chosen.argument ? " " : ""}`;
+      return setDraft({ text, cursor: [...text].length }), true;
+    }
+    if (key.return && !isNewlineKey(input, key)) return chooseCommand(chosen), true;
+    return false;
+  };
+
+  /** O menu dos comandos, logo acima da caixa de texto: nome e, ao lado, o que faz. */
+  function renderCommandMenu(): ReactNode {
+    const visible = 8;
+    const index = Math.min(commandIndex, commandMatches.length - 1);
+    const first = Math.min(Math.max(index - visible + 1, 0), Math.max(commandMatches.length - visible, 0));
+    const nameWidth = Math.max(...commandMatches.map((command) => command.name.length)) + 3;
+    return h(
+      Box,
+      { flexDirection: "column", flexShrink: 0, borderStyle: "round", borderColor: theme.border, paddingX: 1 },
+      ...commandMatches.slice(first, first + visible).map((command, at) => {
+        const active = first + at === index;
+        const bg = active ? { backgroundColor: theme.selected } : {};
+        return h(
+          Text,
+          { key: command.name, wrap: "truncate-end", ...bg },
+          h(Text, { color: active ? theme.accent : undefined, bold: active, ...bg }, `:${command.name}`.padEnd(nameWidth)),
+          h(Text, { color: theme.muted, ...bg }, command.description),
+        );
+      }),
+      h(
+        Text,
+        { color: theme.muted, wrap: "truncate-end" },
+        `${commandMatches.length > visible ? `${index + 1}/${commandMatches.length} · ` : ""}↑↓ escolhe · enter roda · tab completa · esc fecha`,
+      ),
+    );
+  }
+
   const handleChat = (input: string, key: InkKey) => {
+    if (handleCommandMenu(input, key)) return;
     if (key.escape || key.tab) return setFocus("sidebar");
     if (isNewlineKey(input, key)) return edit((current) => editor.insert(current, "\n"));
     if (key.return) return send();
@@ -1779,7 +1843,12 @@ export function App({
     body = h(Box, { paddingTop: 1 }, h(Text, { color: theme.muted }, "Escolha um agente ou grupo na lateral."));
   }
 
-  const input = mode === "chat" && scope ? renderInput() : null;
+  const input =
+    mode === "chat" && scope
+      ? commandMenuOpen
+        ? h(Box, { flexDirection: "column", flexShrink: 0 }, renderCommandMenu(), renderInput())
+        : renderInput()
+      : null;
   const notesPanel =
     mode !== "chat"
       ? null
