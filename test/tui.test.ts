@@ -108,6 +108,18 @@ describe("a interface", () => {
     assert.match(frame(), /● eco: quanto entrou hoje\?/);
   });
 
+  it("mostra no cabeçalho quanto do contexto a conversa ocupa, a partir da metade", async () => {
+    assert.doesNotMatch(frame(), /contexto \d+%/);
+    setScript({ analista: "!contexto 170000\ncheio" });
+    await type("enche");
+    await press(KEY.enter);
+    await seen(/contexto 85%/);
+    setScript({});
+    await type("esvazia");
+    await press(KEY.enter);
+    await waitFor(() => !/contexto \d+%/.test(frame()));
+  });
+
   it("o que você manda enquanto ele responde fica embaixo, na fila, e o streaming não sai do lugar", async () => {
     setScript({ analista: ["!ferramenta Read lento.csv\n!dormir 1500\nprimeira resposta", "segunda resposta", "terceira resposta"] });
     await type("pergunta longa");

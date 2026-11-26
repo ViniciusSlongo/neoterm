@@ -49,6 +49,12 @@ Quanto o agente raciocina antes de responder: baixo, médio, alto, muito alto ou
 | Conversa | `:esforço alto` (`:esforço` mostra o atual) |
 | Terminal | `neoterm agent new … --effort high` |
 
+## Contexto
+
+Quando a conversa chega perto do limite do modelo, o agente compacta o contexto sozinho: guarda um
+resumo e segue. A conversa mostra um aviso, e o histórico na tela continua inteiro. A partir da
+metade, o cabeçalho mostra quanto do contexto está em uso.
+
 ## Memória
 
 O agente guarda fatos com `remember` e tira com `forget`, no `MEMORY.md`. Peça na conversa:

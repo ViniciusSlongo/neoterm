@@ -62,7 +62,25 @@ export type ClaudeEvent =
   | { type: "tool"; id: string; name: string; detail: string }
   | { type: "tool_result"; id: string; error?: string }
   | { type: "plan_usage"; usage: PlanUsage }
-  | { type: "result"; ok: boolean; text: string; durationMs: number };
+  /** A sessão foi compactada (pelo autocompact) para caber na janela do modelo. */
+  | { type: "compacted" }
+  | { type: "result"; ok: boolean; text: string; durationMs: number; context?: ContextUsage };
+
+/** Quanto do contexto a sessão ocupa, depois da última chamada ao modelo, e o tamanho da janela. */
+export type ContextUsage = { used: number; window: number };
+
+/** O contexto do `result`: a última chamada ao modelo (entrada, cache e saída) e a janela dele. */
+export function contextUsage(message: Record<string, unknown>): ContextUsage | undefined {
+  const usage = isRecord(message.usage) ? message.usage : undefined;
+  const iterations = Array.isArray(usage?.iterations) ? usage.iterations.filter(isRecord) : [];
+  const last = iterations.at(-1) ?? usage;
+  if (!last) return undefined;
+  const count = (key: string) => (typeof last[key] === "number" ? (last[key] as number) : 0);
+  const used = count("input_tokens") + count("cache_read_input_tokens") + count("cache_creation_input_tokens") + count("output_tokens");
+  const models = isRecord(message.modelUsage) ? Object.values(message.modelUsage).filter(isRecord) : [];
+  const window = Math.max(0, ...models.map((model) => (typeof model.contextWindow === "number" ? model.contextWindow : 0)));
+  return used > 0 && window > 0 ? { used, window } : undefined;
+}
 
 export class ClaudeError extends Error {
   readonly exitCode: number | null;
@@ -84,6 +102,9 @@ export function claudeArgs(turn: ClaudeTurn): string[] {
     "--verbose",
     "--model",
     turn.model,
+    // Compacta sozinho quando a conversa chega perto do limite da janela do modelo.
+    "--autocompact",
+    "auto",
     ...(turn.effort ? ["--effort", turn.effort] : []),
     "--append-system-prompt",
     turn.systemPrompt,
@@ -200,6 +221,7 @@ export function* toEvents(message: unknown, cwd: string): Generator<ClaudeEvent>
       if (message.subtype === "init" && typeof message.session_id === "string") {
         yield { type: "init", sessionId: message.session_id, model: String(message.model ?? "") };
       }
+      if (message.subtype === "compact_boundary") yield { type: "compacted" };
       return;
     case "assistant":
       for (const block of contentOf(message)) {
@@ -231,6 +253,7 @@ export function* toEvents(message: unknown, cwd: string): Generator<ClaudeEvent>
         ok: message.subtype === "success" && message.is_error !== true,
         text: typeof message.result === "string" ? message.result : "",
         durationMs: Number(message.duration_ms ?? 0),
+        ...(contextUsage(message) ? { context: contextUsage(message)! } : {}),
       };
       return;
   }

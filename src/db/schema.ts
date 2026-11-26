@@ -27,7 +27,9 @@ export type MessageMeta = {
   asksPerson?: boolean;
   /** Uma consulta de outro agente (ask_agent): quem perguntou. */
   fromAgent?: string;
-  notice?: "routine_failed" | "routine_disabled" | "group_stopped" | "agent_paused" | "followup" | "access_granted";
+  notice?: "routine_failed" | "routine_disabled" | "group_stopped" | "agent_paused" | "followup" | "access_granted" | "compacted";
+  /** Numa resposta: quanto do contexto a sessão ocupava ao terminar, e a janela do modelo. */
+  context?: { used: number; window: number };
 };
 
 /** `agent`: respondendo a uma consulta de outro agente (ask_agent). */

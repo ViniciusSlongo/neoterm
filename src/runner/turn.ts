@@ -183,21 +183,31 @@ export class TurnEngine {
         ...(token && mcpUrl ? { mcp: { url: mcpUrl, token } } : {}),
       };
       let resultText: string;
+      const outcome: StreamOutcome = {};
       const fresh = () => crypto.randomUUID();
       if (spec.session.id) {
         try {
-          resultText = await this.#stream({ ...base, sessionId: spec.session.id, resume: true }, parts, emit);
+          resultText = await this.#stream({ ...base, sessionId: spec.session.id, resume: true }, parts, emit, outcome);
         } catch (error) {
           // A sessão guardada sumiu (alguém apagou o histórico do Claude Code): começa outra.
           if (!(error instanceof ClaudeError && !error.started)) throw error;
           const id = fresh();
           await spec.session.save(id);
-          resultText = await this.#stream({ ...base, sessionId: id, resume: false }, parts, emit);
+          resultText = await this.#stream({ ...base, sessionId: id, resume: false }, parts, emit, outcome);
         }
       } else {
         const id = fresh();
         await spec.session.save(id);
-        resultText = await this.#stream({ ...base, sessionId: id, resume: false }, parts, emit);
+        resultText = await this.#stream({ ...base, sessionId: id, resume: false }, parts, emit, outcome);
+      }
+      // O Claude Code compactou a sessão: fica dito na conversa, antes da resposta.
+      if (outcome.compacted) {
+        await db.insert(messages).values({
+          conversationId: spec.conversationId,
+          author: "system",
+          text: `${slug} compactou o contexto da conversa para continuar (o histórico na tela continua; ele guarda um resumo).`,
+          meta: { notice: "compacted" },
+        });
       }
       const text = resultText || lastText(parts);
       const durationMs = Date.now() - started;
@@ -210,7 +220,7 @@ export class TurnEngine {
           agentId: spec.agentRow.id,
           text,
           parts,
-          ...(spec.routineId ? { meta: { routineId: spec.routineId } } : {}),
+          meta: { ...(spec.routineId ? { routineId: spec.routineId } : {}), ...(outcome.context ? { context: outcome.context } : {}) },
         })
         .returning({ id: messages.id });
       await db.update(runs).set({ status: "succeeded", durationMs, finishedAt: new Date() }).where(eq(runs.id, run.id));
@@ -246,7 +256,7 @@ export class TurnEngine {
   }
 
   /** Roda o Claude Code e junta o que ele fez em `parts`. Devolve o texto final. */
-  async #stream(turn: ClaudeTurn, parts: MessagePart[], emit: (event: TurnEvent) => void): Promise<string> {
+  async #stream(turn: ClaudeTurn, parts: MessagePart[], emit: (event: TurnEvent) => void, outcome: StreamOutcome): Promise<string> {
     const toolIndex = new Map<string, number>();
     for await (const event of runClaude(turn)) {
       switch (event.type) {
@@ -270,14 +280,21 @@ export class TurnEngine {
         case "plan_usage":
           this.#bus.emit({ type: "plan_usage", usage: event.usage });
           break;
+        case "compacted":
+          outcome.compacted = true;
+          break;
         case "result":
           if (!event.ok) throw new Error(event.text || "o Claude não terminou a resposta");
+          if (event.context) outcome.context = event.context;
           return event.text;
       }
     }
     return lastText(parts);
   }
 }
+
+/** O que o turno soube além do texto: o contexto ao terminar e se compactou no caminho. */
+type StreamOutcome = { context?: { used: number; window: number }; compacted?: boolean };
 
 export function lastText(parts: MessagePart[]): string {
   for (let index = parts.length - 1; index >= 0; index--) {

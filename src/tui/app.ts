@@ -1550,6 +1550,14 @@ export function App({
     // A memória que ele está usando: o turno e os serviços que deixou rodando.
     const memory = processes && processes.totalBytes > 0 ? ` · ${bytes(processes.totalBytes)}` : "";
     const leftOver = processes?.processes.filter((entry) => entry.kind === "service" && !entry.inTurn).length ?? 0;
+    // Quanto do contexto a sessão ocupa (da última resposta); âmbar perto de compactar.
+    const lastContext = messages.findLast((message) => message.author === "agent" && message.meta.context)?.meta.context;
+    const contextRatio = lastContext ? lastContext.used / lastContext.window : 0;
+    // Só a partir da metade da janela, que é quando importa; perto do limite ele compacta sozinho.
+    const contextMark =
+      lastContext && contextRatio >= 0.5
+        ? h(Text, { color: contextRatio >= 0.8 ? theme.amber : theme.muted }, ` · contexto ${Math.round(contextRatio * 100)}%`)
+        : null;
     // Tarefas abertas nas notas, quando elas não estão à vista.
     const openTasks = agentState.notes?.openTasks ?? 0;
     const taskReminder =
@@ -1557,9 +1565,9 @@ export function App({
     const services = leftOver ? h(Text, { color: theme.amber }, ` · ◆ ${leftOver} ${leftOver === 1 ? "serviço" : "serviços"}`) : null;
     headerRight =
       agentState.state === "running"
-        ? h(Text, null, h(Text, { color: theme.green }, "● "), h(Text, { color: theme.muted }, `rodando${memory}`), services, taskReminder)
+        ? h(Text, null, h(Text, { color: theme.green }, "● "), h(Text, { color: theme.muted }, `rodando${memory}`), contextMark, services, taskReminder)
         : agentState.state === "paused"
-          ? h(Text, null, h(Text, { color: theme.amber }, "‖ pausado"), h(Text, { color: theme.muted }, memory), services, taskReminder)
+          ? h(Text, null, h(Text, { color: theme.amber }, "‖ pausado"), h(Text, { color: theme.muted }, memory), contextMark, services, taskReminder)
           : h(
               Text,
               null,
@@ -1568,6 +1576,7 @@ export function App({
                 { color: theme.muted },
                 `○ livre${memory || (taskReminder ? "" : `${agentState.model ? ` · ${agentState.model}` : ""}${agentState.effort ? ` · esforço ${EFFORT_LABEL[agentState.effort]}` : ""}`)}`,
               ),
+              contextMark,
               services,
               taskReminder,
             );

@@ -10,6 +10,8 @@
 //   !falhar <mensagem>             morre no meio, sem resultado
 //   !erro <mensagem>               termina com resultado de erro
 //   !dormir <ms>                   espera
+//   !compactar                     a sessão é compactada no meio (compact_boundary)
+//   !contexto <tokens>             o contexto informado no fim (sem isto, cresce 2 mil por mensagem)
 //   !servico <ms>                  deixa um processo rodando em segundo plano (órfão) por <ms>
 // O resto do texto é a resposta. Sem nada, responde "eco: <última linha do prompt>".
 // Cada chamada é registrada em $FAKE_CLAUDE_STATE/calls.jsonl.
@@ -141,6 +143,7 @@ async function callMcp(tool, args) {
 }
 
 const reply = [];
+let contextTokens;
 for (const line of source.split("\n")) {
   const directive = /^!(\S+)\s*(.*)$/.exec(line.trim());
   if (!directive) {
@@ -158,6 +161,10 @@ for (const line of source.split("\n")) {
     reply.push(`[${tool}] ${await callMcp(tool, args)}`);
   } else if (name === "sessao") {
     reply.push(`sessão com ${history.length} mensagens`);
+  } else if (name === "contexto") {
+    contextTokens = Number(rest);
+  } else if (name === "compactar") {
+    out({ type: "system", subtype: "compact_boundary", session_id: sessionId });
   } else if (name === "servico") {
     const child = spawn(process.execPath, ["-e", `setTimeout(() => {}, ${Number(rest) || 60000})`], { detached: true, stdio: "ignore" });
     child.unref();
@@ -179,4 +186,13 @@ if (!text) {
   text = `eco: ${lines.at(-1) ?? ""}`;
 }
 out({ type: "assistant", message: { content: [{ type: "text", text }] }, session_id: sessionId });
-out({ type: "result", subtype: "success", is_error: false, result: text, duration_ms: 12, session_id: sessionId });
+out({
+  type: "result",
+  subtype: "success",
+  is_error: false,
+  result: text,
+  duration_ms: 12,
+  session_id: sessionId,
+  usage: { input_tokens: 5, cache_read_input_tokens: contextTokens ?? history.length * 2000, cache_creation_input_tokens: 100, output_tokens: 50 },
+  modelUsage: { "claude-haiku-5-5": { contextWindow: 200000 } },
+});
