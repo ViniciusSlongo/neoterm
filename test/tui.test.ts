@@ -426,6 +426,8 @@ describe("a interface", () => {
     await press(KEY.enter);
     await seen(/ajuda .*esc volta/);
     await seen(":notas");
+    // As teclas vêm depois dos comandos; numa tela baixa, rolando.
+    for (let step = 0; step < 10; step++) ui.stdin.write("j");
     await seen("TECLAS · CONVERSA");
     await press(KEY.escape);
     await seen("mensagem para analista");
@@ -560,6 +562,20 @@ describe("a interface", () => {
     await press("\x19");
     await seen("última resposta copiada");
     assert.equal(copied, "Resposta **para** copiar.");
+  });
+
+  it(":esforço muda o esforço do agente e aparece no cabeçalho", async () => {
+    await type(":esforço");
+    await press(KEY.enter);
+    await seen("esforço de analista: padrão");
+    await type(":esforço muito alto");
+    await press(KEY.enter);
+    await seen("esforço de analista: muito alto");
+    await waitFor(async () => (await t.api<{ agent: { effort?: string } }>("/agents/analista")).body.agent.effort === "xhigh");
+    await seen("esforço muito alto");
+    await type(":esforço padrão");
+    await press(KEY.enter);
+    await waitFor(async () => (await t.api<{ agent: { effort?: string } }>("/agents/analista")).body.agent.effort === undefined);
   });
 
   it("troca de agente com ↑↓ quando não há texto", async () => {

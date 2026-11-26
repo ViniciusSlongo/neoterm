@@ -13,6 +13,16 @@ const MODELS = [
   { value: "claude-haiku-5-5", label: "haiku" },
 ];
 
+/** O esforço de raciocínio do agente, com nomes em português. "" é o padrão do Claude Code. */
+export const EFFORT_OPTIONS = [
+  { value: "", label: "padrão" },
+  { value: "low", label: "baixo" },
+  { value: "medium", label: "médio" },
+  { value: "high", label: "alto" },
+  { value: "xhigh", label: "muito alto" },
+  { value: "max", label: "máximo" },
+];
+
 const text = (values: Values, key: string) => String(values[key] ?? "").trim();
 const list = (values: Values, key: string) => (Array.isArray(values[key]) ? (values[key] as string[]) : []);
 
@@ -42,6 +52,7 @@ export function newAgentForm(api: NeotermApi, done: (slug: string) => void, cwd 
         hint: "o escopo dele: só trabalha nestas pastas",
       },
       { key: "model", label: "Modelo", kind: "choice", value: "", options: MODELS },
+      { key: "effort", label: "Esforço", kind: "choice", value: "", options: EFFORT_OPTIONS, hint: "quanto ele raciocina antes de agir · mais esforço, mais lento e mais plano" },
     ],
     submit: async (values) => {
       const slug = text(values, "slug");
@@ -54,6 +65,7 @@ export function newAgentForm(api: NeotermApi, done: (slug: string) => void, cwd 
         title: text(values, "title"),
         role: text(values, "role"),
         ...(text(values, "model") ? { model: text(values, "model") } : {}),
+        ...(text(values, "effort") ? { effort: text(values, "effort") } : {}),
       });
       done(slug);
     },
@@ -61,7 +73,7 @@ export function newAgentForm(api: NeotermApi, done: (slug: string) => void, cwd 
 }
 
 /** O que está no AGENT.md hoje, para o formulário de edição começar preenchido. */
-export type AgentFields = { title: string; role: string; model: string | null; folders: string[] };
+export type AgentFields = { title: string; role: string; model: string | null; effort: string | null; folders: string[] };
 
 export function editAgentForm(api: NeotermApi, slug: string, current: AgentFields, done: (deleted: boolean) => void): FormState {
   return {
@@ -89,6 +101,7 @@ export function editAgentForm(api: NeotermApi, slug: string, current: AgentField
         hint: "o escopo dele: só trabalha nestas pastas",
       },
       { key: "model", label: "Modelo", kind: "choice", value: current.model ?? "", options: MODELS },
+      { key: "effort", label: "Esforço", kind: "choice", value: current.effort ?? "", options: EFFORT_OPTIONS, hint: "quanto ele raciocina antes de agir · mais esforço, mais lento e mais plano" },
     ],
     remove: {
       what: `o agente ${slug}`,
@@ -106,6 +119,7 @@ export function editAgentForm(api: NeotermApi, slug: string, current: AgentField
         title: text(values, "title"),
         role: String(values.role ?? ""),
         model: text(values, "model") || null,
+        effort: text(values, "effort") || null,
         folders,
       });
       done(false);

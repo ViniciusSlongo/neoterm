@@ -3,7 +3,7 @@
  * docs leem daqui. Funcionam com ":" ou "/" na frente (:notas e /notas são o mesmo).
  */
 
-export type CommandName = "selecionar" | "copiar" | "config" | "ajuda" | "notas" | "path" | "processos" | "editar" | "rotinas" | "pausar" | "retomar" | "painel" | "mcp";
+export type CommandName = "esforço" | "selecionar" | "copiar" | "config" | "ajuda" | "notas" | "path" | "processos" | "editar" | "rotinas" | "pausar" | "retomar" | "painel" | "mcp";
 
 export type Command = {
   name: CommandName;
@@ -28,6 +28,7 @@ export const COMMANDS: Command[] = [
   { name: "config", aliases: ["cor", "tema"], description: "cor da interface e modelo padrão dos agentes" },
   { name: "selecionar", aliases: ["sel"], description: "modo seleção: selecione texto com o mouse e copie (ctrl+s)" },
   { name: "copiar", aliases: ["copy"], description: "copia a última resposta do agente (ctrl+y)" },
+  { name: "esforço", aliases: ["esforco", "effort"], description: "esforço do agente: :esforço alto (baixo, médio, alto, muito alto, máximo, padrão)", agentOnly: true },
 ];
 
 /** O comando digitado (":notas", "/ps", ":?"), ou `null` se o texto é uma mensagem. */
@@ -37,6 +38,31 @@ export function parseCommand(text: string): CommandName | null {
   const word = match[1]!.toLowerCase();
   return COMMANDS.find((command) => command.name === word || command.aliases.includes(word))?.name ?? null;
 }
+
+/** O nível de esforço digitado (":esforço alto", "/effort max"): o valor do Claude Code, "" para o padrão, ou null. */
+export function parseEffortCommand(text: string): { level: string | null } | null {
+  const match = /^[:/](esforço|esforco|effort)(?:\s+(.+))?$/i.exec(text.trim());
+  if (!match) return null;
+  if (!match[2]) return { level: null };
+  const fold = match[2].trim().normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, "-");
+  const names: Record<string, string> = {
+    padrao: "",
+    default: "",
+    baixo: "low",
+    low: "low",
+    medio: "medium",
+    medium: "medium",
+    alto: "high",
+    high: "high",
+    "muito-alto": "xhigh",
+    xhigh: "xhigh",
+    maximo: "max",
+    max: "max",
+  };
+  return { level: fold in names ? names[fold]! : "?" };
+}
+
+export const EFFORT_LABEL: Record<string, string> = { low: "baixo", medium: "médio", high: "alto", xhigh: "muito alto", max: "máximo" };
 
 /** As teclas, por lugar, para a tela de ajuda e os docs. */
 export const KEYS: { where: string; keys: [string, string][] }[] = [

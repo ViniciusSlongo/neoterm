@@ -45,3 +45,38 @@ describe("editar um agente", () => {
     assert.ok((await loadAgent("quebrado")).folders[0]?.endsWith("conserto"));
   });
 });
+
+describe("esforço do agente", async () => {
+  const { claudeArgs } = await import("../src/runner/claude.ts");
+  const { parseEffortCommand } = await import("../src/tui/commands.ts");
+  const base = { prompt: "", cwd: "/x", model: "claude-opus-5-5", systemPrompt: "", addDirs: [], sessionId: "s", resume: false };
+
+  it("vai para o claude como --effort, e sem ele quando não escolhido", () => {
+    const args = claudeArgs({ ...base, effort: "high" });
+    assert.equal(args[args.indexOf("--effort") + 1], "high");
+    assert.ok(!claudeArgs(base).includes("--effort"));
+  });
+
+  it("fica no AGENT.md, muda e volta ao padrão; valor inválido é recusado", async () => {
+    await makeAgent("pensador", {});
+    assert.equal((await loadAgent("pensador")).effort, undefined);
+    await updateAgent("pensador", { effort: "xhigh" });
+    assert.equal((await loadAgent("pensador")).effort, "xhigh");
+    assert.equal((await readAgentFields("pensador")).effort, "xhigh");
+    await updateAgent("pensador", { effort: null });
+    assert.equal((await loadAgent("pensador")).effort, undefined);
+    const file = join(HOME, "agents", "pensador", "AGENT.md");
+    writeFileSync(file, readFileSync(file, "utf8").replace("folders:", "effort: enorme\nfolders:"));
+    await assert.rejects(loadAgent("pensador"), /effort precisa ser um destes/);
+  });
+
+  it(":esforço entende os nomes em português", () => {
+    assert.deepEqual(parseEffortCommand(":esforço"), { level: null });
+    assert.deepEqual(parseEffortCommand(":esforço alto"), { level: "high" });
+    assert.deepEqual(parseEffortCommand("/esforco Muito Alto"), { level: "xhigh" });
+    assert.deepEqual(parseEffortCommand(":effort máximo"), { level: "max" });
+    assert.deepEqual(parseEffortCommand(":esforço padrão"), { level: "" });
+    assert.deepEqual(parseEffortCommand(":esforço enorme"), { level: "?" });
+    assert.equal(parseEffortCommand("esforço alto"), null);
+  });
+});

@@ -10,6 +10,7 @@ editor:
 name: analista
 title: Acompanhamento financeiro
 model: claude-opus-5-5        # opcional; sem isto, o padrão do neoterm
+effort: high                  # opcional: low, medium, high, xhigh, max
 folders:                      # o escopo: as pastas em que ele trabalha; roda na primeira
   - "/Users/voce/Documents/Caixa"
   - "/Users/voce/Downloads/extratos"
@@ -30,6 +31,19 @@ O `AGENT.md` é lido de novo a cada turno: mudou, vale na próxima resposta.
   recuperar), as rotinas desligam e ele sai dos grupos. As pastas do escopo nunca são tocadas.
 - **Recomeçar do zero**: `neoterm agent reset <nome>` apaga conversas, rotinas e memória e mantém o
   `AGENT.md`. Mostra o que vai apagar e pede confirmação.
+
+## Esforço
+
+Quanto o agente raciocina antes de agir: **baixo**, **médio**, **alto**, **muito alto** ou
+**máximo** (o `--effort` do Claude Code). Mais esforço dá respostas mais cuidadosas, mais lentas e
+que gastam mais do plano. Sem escolher, vale o padrão do Claude Code.
+
+- Na criação ou na edição (`e`), no campo **Esforço**, com `←→`.
+- Na conversa: `:esforço` mostra o atual; `:esforço alto` muda (também `baixo`, `médio`,
+  `muito alto`, `máximo` e `padrão`).
+- No terminal: `neoterm agent new … --effort high`.
+
+Vale a partir da próxima resposta, e aparece no cabeçalho da conversa.
 
 ## O que fica na pasta do agente
 

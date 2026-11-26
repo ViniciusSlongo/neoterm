@@ -21,6 +21,7 @@ Escreva na conversa, com `:` ou `/` na frente (`:notas` e `/notas` são o mesmo)
 | `:config` | `:cor`, `:tema` | cor da interface e modelo padrão dos agentes |
 | `:selecionar` | `:sel` | modo seleção: selecione texto com o mouse e copie (`ctrl+s`) |
 | `:copiar` | `:copy` | copia a última resposta do agente (`ctrl+y`) |
+| `:esforço` | `:esforco`, `:effort` | mostra ou muda o esforço do agente: `:esforço alto` |
 
 Num grupo, `@nome` chama um agente e `@você` é para você.
 

@@ -17,6 +17,8 @@ export type ClaudeTurn = {
   prompt: string;
   cwd: string;
   model: string;
+  /** O esforço de raciocínio (--effort); sem isto, o padrão do Claude Code. */
+  effort?: string;
   systemPrompt: string;
   addDirs: readonly string[];
   sessionId: string;
@@ -82,6 +84,7 @@ export function claudeArgs(turn: ClaudeTurn): string[] {
     "--verbose",
     "--model",
     turn.model,
+    ...(turn.effort ? ["--effort", turn.effort] : []),
     "--append-system-prompt",
     turn.systemPrompt,
     // Por padrão o Claude Code grava o prompt de sistema na primeira mensagem e o reusa em toda

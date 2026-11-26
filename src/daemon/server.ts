@@ -8,6 +8,7 @@ import {
   AgentNotFound,
   AgentProblem,
   createAgent,
+  EFFORTS,
   loadAgent,
   readAgentFields,
   updateAgent,
@@ -65,6 +66,7 @@ const AgentPatch = z.object({
   title: z.string().max(200).optional(),
   role: z.string().max(100_000).optional(),
   model: z.string().min(1).nullable().optional(),
+  effort: z.enum(EFFORTS).nullable().optional(),
   folders: z.array(z.string().min(1)).min(1).optional(),
 });
 const NewAgent = z.object({
@@ -73,6 +75,7 @@ const NewAgent = z.object({
   title: z.string().optional(),
   role: z.string().optional(),
   model: z.string().optional(),
+  effort: z.enum(EFFORTS).optional(),
   folders: z.array(z.string(), { error: "escolha pelo menos uma pasta: o escopo onde o agente vai trabalhar" }),
 });
 const NewRoutine = z.object({

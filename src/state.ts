@@ -26,6 +26,7 @@ export type NeotermState = {
     name: string;
     title: string;
     model: string | null;
+    effort: string | null;
     folders: string[];
     state: AgentState;
     /** As notas de quem usa sobre ele: se tem algo escrito e quantas tarefas (- [ ]) estão abertas. */
@@ -105,6 +106,7 @@ export async function buildState(core: Core, groupsEngine: GroupEngine, planUsag
       name: agent.name,
       title: agent.title,
       model: agent.model ?? null,
+      effort: agent.effort ?? null,
       folders: agent.folders,
       state: running.has(agent.slug) ? "running" : rows[index]?.pausedAt ? "paused" : "idle",
       notes: notes[index] ?? { has: false, openTasks: 0 },

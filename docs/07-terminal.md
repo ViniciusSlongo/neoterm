@@ -21,7 +21,7 @@ neoterm daemon                      # roda o motor neste terminal, até o ctrl+c
 ```sh
 neoterm agents
 neoterm agent new analista --folder ~/Documents/Caixa --folder ~/Downloads/extratos \
-  --title "Acompanhamento financeiro" --role "Acompanha o caixa…" [--model <modelo>]
+  --title "Acompanhamento financeiro" --role "Acompanha o caixa…" [--model <modelo>] [--effort high]
 neoterm agent pause|resume analista
 neoterm agent reset analista [--yes]     # recomeça do zero; mantém o AGENT.md
 neoterm agent delete analista [--yes]    # manda para ~/.neoterm/trash

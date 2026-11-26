@@ -38,7 +38,7 @@ export type RoutineItem = {
 
 export type RunItem = { id: string; status: RunStatus; error: string | null; durationMs: number | null; startedAt: string };
 
-export type NewAgentInput = { slug: string; folders: string[]; title?: string; role?: string; model?: string };
+export type NewAgentInput = { slug: string; folders: string[]; title?: string; role?: string; model?: string; effort?: string };
 export type NewGroupInput = { slug: string; folder: string; members: string[]; objective?: string };
 export type NewRoutineInput = {
   agent: string;
@@ -66,7 +66,7 @@ export interface NeotermApi {
   setPaused(slug: string, paused: boolean): Promise<void>;
   /** O que está no AGENT.md hoje (para editar) e a edição. */
   agentDefinition(slug: string): Promise<AgentFields>;
-  updateAgent(slug: string, patch: { title?: string; role?: string; model?: string | null; folders?: string[] }): Promise<void>;
+  updateAgent(slug: string, patch: { title?: string; role?: string; model?: string | null; effort?: string | null; folders?: string[] }): Promise<void>;
   /** As integrações (MCP), como o Claude Code as vê. */
   integrations(refresh?: boolean): Promise<Integrations>;
   /** O que o grupo é hoje (membros em ordem: o primeiro coordena) e a edição. */

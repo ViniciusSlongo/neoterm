@@ -20,7 +20,7 @@ const HELP = `${bold("neoterm")} ${muted("· agentes no terminal, com o Claude C
 
 ${muted("agentes")}
   neoterm agents
-  neoterm agent new <nome> --folder <pasta> [--folder <outra>] [--title <título>] [--role <função>] [--model <modelo>]
+  neoterm agent new <nome> --folder <pasta> [--folder <outra>] [--title <título>] [--role <função>] [--model <modelo>] [--effort low|medium|high|xhigh|max]
   neoterm agent pause|resume <nome>
   neoterm agent reset <nome> [--yes]    recomeça do zero (conversas, rotinas, memória)
   neoterm agent delete <nome> [--yes]   manda para ~/.neoterm/trash
@@ -146,6 +146,7 @@ async function agentCommand(args: string[]): Promise<number> {
       title: { type: "string" },
       role: { type: "string" },
       model: { type: "string" },
+      effort: { type: "string" },
       folder: { type: "string", multiple: true },
       yes: { type: "boolean", short: "y" },
     },

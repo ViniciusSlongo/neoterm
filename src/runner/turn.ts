@@ -169,6 +169,7 @@ export class TurnEngine {
         agent: slug,
         cwd: spec.cwd,
         model: spec.agent.model ?? settings.defaultModel,
+        ...(spec.agent.effort ? { effort: spec.agent.effort } : {}),
         systemPrompt: await buildSystemPrompt(spec.agent, {
           mode: spec.mode,
           now: new Date(),

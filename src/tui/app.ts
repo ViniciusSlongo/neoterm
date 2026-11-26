@@ -18,7 +18,7 @@ import { clipboardImage, expandImages, pastedImages, shortenImages } from "./ima
 import { type Browser, browserKey, load as loadBrowser, newBrowser, renderBrowser } from "./browser.ts";
 import { referenceFor } from "./files.ts";
 import { renderMarkdown } from "./markdown.ts";
-import { parseCommand } from "./commands.ts";
+import { EFFORT_LABEL, parseCommand, parseEffortCommand } from "./commands.ts";
 import { renderHelp } from "./help.ts";
 import { CONFIG_ROWS, CUSTOM_ROW, MODEL_OPTIONS, MODEL_ROW, renderConfig } from "./config.ts";
 import { ACCENTS, DEFAULT_ACCENT, isHexColor, setAccent } from "./theme.ts";
@@ -873,6 +873,21 @@ export function App({
     const text = expandImages(draft.text, images.current).trim();
     if (!text || !scope) return;
     clearDraft();
+    // :esforço [nível]: sem nível, diz o atual; com nível, muda o do agente.
+    const effortCommand = parseEffortCommand(text);
+    if (effortCommand) {
+      if (scope.kind !== "agent") return say("o esforço é de cada agente: abra a conversa com um");
+      const current = agentState?.effort;
+      if (effortCommand.level === null) {
+        return say(`esforço de ${scope.slug}: ${current ? EFFORT_LABEL[current] : "padrão"} · mude com :esforço baixo | médio | alto | muito alto | máximo | padrão`);
+      }
+      if (effortCommand.level === "?") return say("esforço: baixo, médio, alto, muito alto, máximo ou padrão");
+      const level = effortCommand.level;
+      return run(
+        api.updateAgent(scope.slug, { effort: level || null }),
+        `esforço de ${scope.slug}: ${level ? EFFORT_LABEL[level] : "padrão"} · vale a partir da próxima resposta`,
+      );
+    }
     // Comandos: com : ou / na frente (:notas, /notas).
     switch (parseCommand(text)) {
       case "ajuda":
@@ -1574,7 +1589,17 @@ export function App({
         ? h(Text, null, h(Text, { color: theme.green }, "● "), h(Text, { color: theme.muted }, `rodando${memory}`), services, taskReminder)
         : agentState.state === "paused"
           ? h(Text, null, h(Text, { color: theme.amber }, "‖ pausado"), h(Text, { color: theme.muted }, memory), services, taskReminder)
-          : h(Text, null, h(Text, { color: theme.muted }, `○ livre${memory || (taskReminder ? "" : agentState.model ? ` · ${agentState.model}` : "")}`), services, taskReminder);
+          : h(
+              Text,
+              null,
+              h(
+                Text,
+                { color: theme.muted },
+                `○ livre${memory || (taskReminder ? "" : `${agentState.model ? ` · ${agentState.model}` : ""}${agentState.effort ? ` · esforço ${EFFORT_LABEL[agentState.effort]}` : ""}`)}`,
+              ),
+              services,
+              taskReminder,
+            );
   } else if (groupState) {
     headerLeft = h(
       Text,

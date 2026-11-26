@@ -18,10 +18,15 @@ const SLUG = /^[a-z0-9][a-z0-9-]{0,39}$/;
 // Uma pasta é só o caminho. Aceita também `{ path: … }`, o formato de antes.
 const Folder = z.union([z.string().min(1), z.object({ path: z.string().min(1) }).transform((folder) => folder.path)]);
 
+/** O esforço de raciocínio do agente (o --effort do Claude Code). Sem isto, o padrão do Claude Code. */
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORTS)[number];
+
 const Frontmatter = z.object({
   name: z.string().min(1),
   title: z.string().default(""),
   model: z.string().min(1).optional(),
+  effort: z.enum(EFFORTS, { error: `effort precisa ser um destes: ${EFFORTS.join(", ")}` }).optional(),
   folders: z.array(Folder).default([]),
 });
 
@@ -36,6 +41,7 @@ export type AgentDefinition = {
   /** A função: o corpo do AGENT.md. */
   role: string;
   model?: string;
+  effort?: Effort;
   /** O escopo: as pastas do computador em que ele trabalha, com caminho absoluto. */
   folders: string[];
 };
@@ -100,6 +106,7 @@ export function parseAgentFile(slug: string, source: string): AgentDefinition {
     title: front.title,
     role,
     ...(front.model ? { model: front.model } : {}),
+    ...(front.effort ? { effort: front.effort } : {}),
     folders,
   };
 }
@@ -167,6 +174,7 @@ export type NewAgent = {
   title?: string;
   role?: string;
   model?: string;
+  effort?: Effort;
   /** O escopo: pastas que já existem, com caminho absoluto ou ~. Ele roda na primeira. */
   folders: string[];
 };
@@ -213,11 +221,15 @@ export type AgentPatch = {
   role?: string;
   /** null volta ao modelo padrão do neoterm. */
   model?: string | null;
+  /** null volta ao esforço padrão do Claude Code. */
+  effort?: Effort | null;
   folders?: string[];
 };
 
 /** Os campos editáveis como estão no arquivo, mesmo que o agente esteja com um problema (uma pasta sumiu). */
-export async function readAgentFields(slug: string): Promise<{ title: string; role: string; model: string | null; folders: string[] }> {
+export async function readAgentFields(
+  slug: string,
+): Promise<{ title: string; role: string; model: string | null; effort: Effort | null; folders: string[] }> {
   if (!isValidSlug(slug)) throw new AgentNotFound(slug);
   let source: string;
   try {
@@ -240,6 +252,7 @@ export async function readAgentFields(slug: string): Promise<{ title: string; ro
     title: typeof raw.title === "string" ? raw.title : "",
     role: body.trim(),
     model: typeof raw.model === "string" && raw.model ? raw.model : null,
+    effort: (EFFORTS as readonly unknown[]).includes(raw.effort) ? (raw.effort as Effort) : null,
     folders: folders.map((folder) => expandPath(folder, agentDir(slug))),
   };
 }
@@ -268,6 +281,10 @@ export async function updateAgent(slug: string, patch: AgentPatch): Promise<Agen
     if (patch.model) doc.set("model", patch.model);
     else doc.delete("model");
   }
+  if (patch.effort !== undefined) {
+    if (patch.effort) doc.set("effort", patch.effort);
+    else doc.delete("effort");
+  }
   if (patch.folders !== undefined) doc.set("folders", await resolveFolders(slug, patch.folders));
   let role = body.trim();
   if (patch.role !== undefined) {
@@ -291,6 +308,7 @@ export function agentTemplate(input: NewAgent): string {
     `name: ${yamlString(name)}`,
     `title: ${yamlString(input.title?.trim() ?? "")}`,
     input.model ? `model: ${input.model}` : "# model: claude-opus-5-5   # sem isto, usa o modelo padrão do neoterm",
+    input.effort ? `effort: ${input.effort}` : "# effort: high             # low, medium, high, xhigh, max; sem isto, o padrão do Claude Code",
     "",
     "# Escopo: as pastas do computador em que ele trabalha. Roda na primeira.",
     "folders:",
