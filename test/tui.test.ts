@@ -532,8 +532,9 @@ describe("a interface", () => {
     await press("\x0e"); // volta à conversa
     await seen("☑ ligar pro cliente");
     await seen("☐ mandar o resumo");
-    // Lembrete na lateral: 1 tarefa aberta.
-    await seen(/analista ☐1/);
+    // Lembrete na lateral: há notas (sem contagem de tarefas).
+    await seen(/analista ✎/);
+    assert.doesNotMatch(frame(), /☐\d/);
     // Fixar: trocando de agente, as notas continuam abertas (as do outro).
     await press("\x0e");
     await press("\x10"); // ctrl+p
@@ -553,8 +554,9 @@ describe("a interface", () => {
     await seen("notas soltas");
     await press(KEY.escape);
     await waitFor(() => !frame().includes("NOTAS"));
-    // Fechadas, o cabeçalho lembra das tarefas abertas.
-    await seen(/☐ 1 tarefa \(ctrl\+n\)/);
+    // Fechadas, o cabeçalho não conta tarefas; a lateral segue mostrando que há notas.
+    assert.doesNotMatch(frame(), /tarefa/);
+    await seen(/analista ✎/);
     writeFileSync(file, "");
     await t.api("/agents/analista/notes", { method: "PUT", body: { text: "" } });
   });

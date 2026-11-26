@@ -2,7 +2,6 @@ import { and, gte, inArray } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import { listAgents } from "./agents/identity.ts";
 import { notesPath } from "./agents/notes.ts";
-import { countTasks } from "./agents/tasks.ts";
 import { type AttentionItem, openAttention } from "./attention.ts";
 import { readSettings } from "./config.ts";
 import type { Core } from "./core.ts";
@@ -29,8 +28,8 @@ export type NeotermState = {
     effort: string | null;
     folders: string[];
     state: AgentState;
-    /** As notas de quem usa sobre ele: se tem algo escrito e quantas tarefas (- [ ]) estão abertas. */
-    notes: { has: boolean; openTasks: number };
+    /** As notas de quem usa sobre ele: se tem algo escrito. */
+    notes: { has: boolean };
   }[];
   problems: { slug: string; error: string }[];
   groups: { slug: string; folder: string; members: string[]; coordinator: string | null; busy: boolean; waiting: boolean }[];
@@ -51,7 +50,7 @@ export async function buildState(core: Core, groupsEngine: GroupEngine, planUsag
   const notes = await Promise.all(
     agents.map(async (agent) => {
       const text = await readFile(notesPath(agent.slug), "utf8").catch(() => "");
-      return { has: text.trim().length > 0, openTasks: countTasks(text).open };
+      return { has: text.trim().length > 0 };
     }),
   );
   const waitingGroups = new Set(attention.filter((item) => item.kind === "group_waiting").map((item) => item.group));
@@ -109,7 +108,7 @@ export async function buildState(core: Core, groupsEngine: GroupEngine, planUsag
       effort: agent.effort ?? null,
       folders: agent.folders,
       state: running.has(agent.slug) ? "running" : rows[index]?.pausedAt ? "paused" : "idle",
-      notes: notes[index] ?? { has: false, openTasks: 0 },
+      notes: notes[index] ?? { has: false },
     })),
     problems: problems.map((problem) => ({ slug: problem.slug, error: problem.message })),
     groups,

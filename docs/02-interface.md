@@ -9,7 +9,7 @@
 | Abrir agente ou grupo | `↑↓` e `enter` |
 | Quem está trabalhando | `●` verde e spinner ao lado do nome |
 | Mensagem nova | `•` depois do nome |
-| Notas e tarefas abertas | `✎` e `☐2` depois do nome |
+| Tem notas | `✎` depois do nome |
 | Precisa de você | itens em amarelo; `enter` abre, `x` dispensa |
 | Painel, integrações, config | `d`, `i`, `c` |
 

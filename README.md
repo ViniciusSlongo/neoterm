@@ -4,7 +4,7 @@
 
 ```
  AGENTES               │  analista  · Financeiro · ~/Documents/Caixa      ○ livre · 77 MB
- ● analista ⠹  ☐2      │ ──────────────────────────────────────────────────────────────
+ ● analista ⠹  ✎       │ ──────────────────────────────────────────────────────────────
  ○ dev                 │  ┃ quanto entrou essa semana?
  GRUPOS                │
  # fechamento          │    ⎿ Read   extratos/novembro.csv

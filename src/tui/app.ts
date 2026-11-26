@@ -1504,8 +1504,8 @@ export function App({
       // Trabalhando: um spinner girando logo depois do nome.
       const spinner = busy ? " ⠋" : "";
       const dot = unread.has(`agent:${agent.slug}`) ? " •" : "";
-      // Lembrete das notas: tarefas abertas (☐ 2) ou só que há notas (✎).
-      const noteMark = agent.notes?.openTasks ? ` ☐${agent.notes.openTasks}` : agent.notes?.has ? " ✎" : "";
+      // Lembrete de que há notas sobre ele.
+      const noteMark = agent.notes?.has ? " ✎" : "";
       sidebar.push(
         row(
           `a-${agent.slug}`,
@@ -1622,27 +1622,22 @@ export function App({
       lastContext && contextRatio >= 0.5
         ? h(Text, { color: contextRatio >= 0.8 ? theme.amber : theme.muted }, ` · contexto ${Math.round(contextRatio * 100)}%`)
         : null;
-    // Tarefas abertas nas notas, quando elas não estão à vista.
-    const openTasks = agentState.notes?.openTasks ?? 0;
-    const taskReminder =
-      openTasks && !(notes && notes.slug === agentState.slug) ? h(Text, { color: theme.accent }, ` · ☐ ${openTasks} ${openTasks === 1 ? "tarefa" : "tarefas"} (ctrl+n)`) : null;
     const services = leftOver ? h(Text, { color: theme.amber }, ` · ◆ ${leftOver} ${leftOver === 1 ? "serviço" : "serviços"}`) : null;
     headerRight =
       agentState.state === "running"
-        ? h(Text, null, h(Text, { color: theme.green }, "● "), h(Text, { color: theme.muted }, `rodando${memory}`), contextMark, services, taskReminder)
+        ? h(Text, null, h(Text, { color: theme.green }, "● "), h(Text, { color: theme.muted }, `rodando${memory}`), contextMark, services)
         : agentState.state === "paused"
-          ? h(Text, null, h(Text, { color: theme.amber }, "‖ pausado"), h(Text, { color: theme.muted }, memory), contextMark, services, taskReminder)
+          ? h(Text, null, h(Text, { color: theme.amber }, "‖ pausado"), h(Text, { color: theme.muted }, memory), contextMark, services)
           : h(
               Text,
               null,
               h(
                 Text,
                 { color: theme.muted },
-                `○ livre${memory || (taskReminder ? "" : `${agentState.model ? ` · ${agentState.model}` : ""}${agentState.effort ? ` · esforço ${EFFORT_LABEL[agentState.effort]}` : ""}`)}`,
+                `○ livre${memory || `${agentState.model ? ` · ${agentState.model}` : ""}${agentState.effort ? ` · esforço ${EFFORT_LABEL[agentState.effort]}` : ""}`}`,
               ),
               contextMark,
               services,
-              taskReminder,
             );
   } else if (groupState) {
     headerLeft = h(
