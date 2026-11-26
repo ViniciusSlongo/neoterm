@@ -15,6 +15,8 @@ export type TurnEvent =
   | { type: "text"; text: string }
   | { type: "tool"; name: string; detail: string }
   | { type: "tool_error"; name: string; error: string }
+  /** Ele leu uma mensagem mandada no meio do turno: o que já fez foi para a conversa e recomeça. */
+  | { type: "flush" }
   | { type: "done"; messageId: string; durationMs: number }
   | { type: "error"; message: string };
 

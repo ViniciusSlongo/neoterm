@@ -18,6 +18,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 
 const argv = process.argv.slice(2);
 const option = (name) => {
@@ -62,8 +63,36 @@ if (argv[0] === "mcp" && argv[1] === "list") {
 const state = process.env.FAKE_CLAUDE_STATE ?? join(process.cwd(), ".fake-claude");
 mkdirSync(join(state, "sessions"), { recursive: true });
 
+// A entrada: em stream-json (uma mensagem por linha, como o neoterm manda; mais podem chegar com o
+// turno andando), ou texto puro.
+const streaming = option("--input-format") === "stream-json";
+const incoming = [];
+let stdinClosed = false;
+let wake = () => {};
+const reader = createInterface({ input: process.stdin });
+reader.on("line", (line) => {
+  incoming.push(line);
+  wake();
+});
+reader.on("close", () => {
+  stdinClosed = true;
+  wake();
+});
+async function nextLine() {
+  while (incoming.length === 0 && !stdinClosed) await new Promise((resolve) => (wake = resolve));
+  return incoming.shift() ?? null;
+}
+const textOf = (line) => {
+  try {
+    const message = JSON.parse(line);
+    return typeof message?.message?.content === "string" ? message.message.content : "";
+  } catch {
+    return line;
+  }
+};
 let prompt = "";
-for await (const chunk of process.stdin) prompt += chunk;
+if (streaming) prompt = textOf((await nextLine()) ?? "");
+else for (let line = await nextLine(); line !== null; line = await nextLine()) prompt += `${line}\n`;
 
 const system = option("--append-system-prompt") ?? "";
 const agent = /Você é ([^,.\n]+)/.exec(system)?.[1]?.trim() ?? "agente";
@@ -103,6 +132,8 @@ const source = scripted() ?? prompt;
 const tools = (option("--tools") ?? "").split(",").filter(Boolean);
 
 out({ type: "system", subtype: "init", session_id: sessionId, model: option("--model") ?? "fake", tools, cwd: process.cwd() });
+// O eco da mensagem que abre o turno, como o claude faz com --replay-user-messages.
+if (streaming) out({ type: "user", isReplay: true, message: { role: "user", content: prompt }, session_id: sessionId });
 out({
   type: "rate_limit_event",
   rate_limit_info: { unifiedWindows: { five_hour: { utilization: 0.1, resetsAt: 1795649400 }, seven_day: { utilization: 0.2, resetsAt: 1795939200 } } },
@@ -142,6 +173,20 @@ async function callMcp(tool, args) {
   return text;
 }
 
+// As mensagens que chegaram com o turno andando: ele as "lê" depois de cada passo (o eco do
+// --replay-user-messages) e as considera na resposta.
+const considered = [];
+const echo = (text) => out({ type: "user", isReplay: true, message: { role: "user", content: text }, session_id: sessionId });
+function drain() {
+  while (streaming && incoming.length > 0) {
+    const text = textOf(incoming.shift());
+    echo(text);
+    considered.push(text);
+    history.push(text);
+  }
+  writeFileSync(sessionFile, JSON.stringify(history));
+}
+
 const reply = [];
 let contextTokens;
 for (const line of source.split("\n")) {
@@ -178,13 +223,16 @@ for (const line of source.split("\n")) {
     out({ type: "result", subtype: "error_during_execution", is_error: true, result: rest, duration_ms: 5 });
     process.exit(0);
   }
+  drain();
 }
+drain();
 
 let text = reply.join("\n").trim();
 if (!text) {
   const lines = prompt.trim().split("\n").filter((line) => line.trim() && !line.trim().startsWith("!"));
   text = `eco: ${lines.at(-1) ?? ""}`;
 }
+if (considered.length > 0) text += `\nconsiderei: ${considered.join(" | ")}`;
 out({ type: "assistant", message: { content: [{ type: "text", text }] }, session_id: sessionId });
 out({
   type: "result",
@@ -196,3 +244,13 @@ out({
   usage: { input_tokens: 5, cache_read_input_tokens: contextTokens ?? history.length * 2000, cache_creation_input_tokens: 100, output_tokens: 50 },
   modelUsage: { "claude-haiku-5-5": { contextWindow: 200000 } },
 });
+
+// O que chega depois da resposta vira o turno seguinte, até a entrada fechar.
+for (let line = streaming ? await nextLine() : null; line !== null; line = await nextLine()) {
+  const extra = textOf(line);
+  echo(extra);
+  history.push(extra);
+  writeFileSync(sessionFile, JSON.stringify(history));
+  out({ type: "assistant", message: { content: [{ type: "text", text: `eco: ${extra}` }] }, session_id: sessionId });
+  out({ type: "result", subtype: "success", is_error: false, result: `eco: ${extra}`, duration_ms: 5, session_id: sessionId });
+}

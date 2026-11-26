@@ -3,7 +3,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { chatWithAgent } from "../agents/chat.ts";
+import { chatWithAgent, injectIntoChat } from "../agents/chat.ts";
 import {
   AgentNotFound,
   AgentProblem,
@@ -45,6 +45,8 @@ import { runs } from "../db/schema.ts";
  */
 
 const Text = z.object({ text: z.string().trim().min(1).max(100_000) });
+/** `inject`: se ele estiver respondendo, a mensagem entra na resposta em andamento (a interface manda). */
+const ChatMessage = Text.extend({ inject: z.boolean().optional() });
 const Confirm = z.object({ confirm: z.literal(true) });
 const Notes = z.object({ text: z.string().max(NOTES_MAX_LENGTH) });
 const SettingsPatch = z.object({
@@ -217,7 +219,9 @@ export function createApp(neoterm: Neoterm): Hono {
   });
   app.post("/agents/:slug/messages", async (c) => {
     const agent = await loadAgent(c.req.param("slug"));
-    const { text } = await body(c.req.raw, Text);
+    const { text, inject } = await body(c.req.raw, ChatMessage);
+    // Com uma resposta em andamento, a mensagem entra nela (ele lê no próximo passo).
+    if (inject && (await injectIntoChat(neoterm.core, agent.slug, text))) return c.json({ injected: true }, 202);
     return streamSSE(c, async (stream) => {
       let writes = Promise.resolve();
       const send = (event: TurnEvent) => {

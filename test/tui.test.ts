@@ -120,8 +120,8 @@ describe("a interface", () => {
     await waitFor(() => !/contexto \d+%/.test(frame()));
   });
 
-  it("o que você manda enquanto ele responde fica embaixo, na fila, e o streaming não sai do lugar", async () => {
-    setScript({ analista: ["!ferramenta Read lento.csv\n!dormir 1500\nprimeira resposta", "segunda resposta", "terceira resposta"] });
+  it("o que você manda enquanto ele responde espera na fila e entra na resposta em andamento", async () => {
+    setScript({ analista: "!ferramenta Read lento.csv\n!dormir 1500\nprimeira resposta" });
     await type("pergunta longa");
     await press(KEY.enter);
     await seen(/⎿ Read\s+lento\.csv/);
@@ -129,12 +129,15 @@ describe("a interface", () => {
     await press(KEY.enter);
     await type("e outra");
     await press(KEY.enter);
-    // Uma fila só, com as mensagens numeradas.
+    // Até ele ler, ficam numa fila só, numeradas, embaixo do que ele está fazendo.
     await seen(/┃ pergunta longa[\s\S]*⎿ Read\s+lento\.csv[\s\S]*trabalhando…[\s\S]*┃ na fila\s*│?\s*\n.*┃ 1\. mais uma coisa\s*│?\s*\n.*┃ 2\. e outra/);
     assert.equal(frame().match(/na fila/g)?.length, 1);
-    await seen("● terceira resposta", 15_000);
-    assert.match(frame(), /● primeira resposta[\s\S]*┃ mais uma coisa[\s\S]*● segunda resposta[\s\S]*┃ e outra[\s\S]*● terceira resposta/);
+    // Ele as lê no próximo passo, na mesma resposta: entram na conversa onde ele leu, e a resposta as considera.
+    await seen("considerei: mais uma coisa | e outra", 15_000);
+    assert.match(frame(), /┃ pergunta longa[\s\S]*⎿ Read\s+lento\.csv[\s\S]*┃ mais uma coisa[\s\S]*┃ e outra[\s\S]*● primeira resposta/);
     assert.doesNotMatch(frame(), /na fila/);
+    // Um turno só: as duas foram na mesma chamada do claude.
+    assert.equal(fakeCalls().filter((call) => call.prompt.includes("pergunta longa") || call.prompt.includes("mais uma coisa")).length, 1);
     setScript({});
   });
 

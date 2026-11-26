@@ -400,6 +400,8 @@ export function App({
           const next = { ...current };
           const turn = event.event;
           if (turn.type === "start") next[key] = { agent: event.agent, parts: [] };
+          // Ele leu uma mensagem nova: o que já fez foi para a conversa; o ao vivo recomeça.
+          else if (turn.type === "flush") next[key] = { agent: event.agent, parts: [] };
           else if (turn.type === "done" || turn.type === "error") delete next[key];
           else {
             const existing = next[key] ?? { agent: event.agent, parts: [] };

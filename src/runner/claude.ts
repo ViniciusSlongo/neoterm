@@ -29,6 +29,8 @@ export type ClaudeTurn = {
    * neoterm acha depois os processos que ele deixou rodando, mesmo órfãos.
    */
   agent?: string;
+  /** Mensagens novas durante o turno (a conversa com a pessoa): ele as lê no próximo passo. */
+  input?: TurnInput;
   /** O servidor MCP do neoterm e a chave desta execução. */
   mcp?: { url: string; token: string };
   signal?: AbortSignal;
@@ -64,7 +66,46 @@ export type ClaudeEvent =
   | { type: "plan_usage"; usage: PlanUsage }
   /** A sessão foi compactada (pelo autocompact) para caber na janela do modelo. */
   | { type: "compacted" }
-  | { type: "result"; ok: boolean; text: string; durationMs: number; context?: ContextUsage };
+  /** O Claude Code leu uma mensagem que chegou (o eco do --replay-user-messages). */
+  | { type: "replay"; text: string }
+  /** O agente leu uma mensagem mandada durante o turno (via `input`). */
+  | { type: "injected"; text: string }
+  | { type: "result"; ok: boolean; text: string; durationMs: number; context?: ContextUsage; queued?: number };
+
+/**
+ * A entrada de um turno em andamento. A mensagem que abre o turno e as que chegam depois vão em
+ * stream-json; o Claude Code lê as novas no próximo passo (depois da ferramenta em curso) e
+ * considera na mesma resposta. Uma que chega depois da resposta vira o turno seguinte dele.
+ */
+export class TurnInput {
+  #write: ((text: string) => void) | null = null;
+  #closed = false;
+  /** Mandadas e ainda não lidas pelo agente, na ordem. */
+  readonly pending: string[] = [];
+
+  /** Liga a um processo do claude; as que esperam (de um processo que caiu) vão de novo. */
+  attach(write: (text: string) => void): void {
+    this.#write = write;
+    for (const text of this.pending) write(text);
+  }
+
+  /** Manda uma mensagem para o turno; `false` se ele já terminou (aí ela vai para a fila normal). */
+  send(text: string): boolean {
+    if (this.#closed) return false;
+    this.pending.push(text);
+    this.#write?.(text);
+    return true;
+  }
+
+  /** Fecha: não aceita mais nada. Devolve as que não chegaram a ser lidas. */
+  close(): string[] {
+    this.#closed = true;
+    return this.pending.splice(0);
+  }
+}
+
+/** Uma mensagem de quem usa, no formato do --input-format stream-json. */
+export const userLine = (text: string) => `${JSON.stringify({ type: "user", message: { role: "user", content: text } })}\n`;
 
 /** Quanto do contexto a sessão ocupa, depois da última chamada ao modelo, e o tamanho da janela. */
 export type ContextUsage = { used: number; window: number };
@@ -100,6 +141,11 @@ export function claudeArgs(turn: ClaudeTurn): string[] {
     "--output-format",
     "stream-json",
     "--verbose",
+    // A entrada também em stream-json: dá para mandar mensagens com o turno andando, e o eco diz
+    // quando o agente leu cada uma.
+    "--input-format",
+    "stream-json",
+    "--replay-user-messages",
     "--model",
     turn.model,
     // Compacta sozinho quando a conversa chega perto do limite da janela do modelo.
@@ -157,10 +203,15 @@ export async function* runClaude(turn: ClaudeTurn): AsyncGenerator<ClaudeEvent> 
     stderr = (stderr + chunk).slice(-4000);
   });
   child.stdin.on("error", () => {});
-  child.stdin.end(turn.prompt);
+  child.stdin.write(userLine(turn.prompt));
+  // Sem `input`, ninguém manda mais nada: a entrada fecha e ele termina ao responder.
+  const input = turn.input;
+  if (input) input.attach((text) => child.stdin.write(userLine(text)));
+  else child.stdin.end();
 
   let started = false;
   let finished = false;
+  let openingEcho = true;
   try {
     for await (const line of createInterface({ input: child.stdout })) {
       if (!line.trim()) continue;
@@ -172,7 +223,23 @@ export async function* runClaude(turn: ClaudeTurn): AsyncGenerator<ClaudeEvent> 
       }
       for (const event of toEvents(message, turn.cwd)) {
         if (event.type === "init") started = true;
-        if (event.type === "result") finished = true;
+        if (event.type === "replay") {
+          // O primeiro eco é a mensagem que abriu o turno; os outros, as mandadas depois.
+          if (openingEcho) {
+            openingEcho = false;
+            continue;
+          }
+          const text = input?.pending.shift() ?? event.text;
+          yield { type: "injected", text };
+          continue;
+        }
+        if (event.type === "result") {
+          // Ainda há mensagem mandada e não lida (ou um turno na fila dele): a resposta continua.
+          if (input && (input.pending.length > 0 || (event.queued ?? 0) > 0)) continue;
+          input?.close();
+          child.stdin.end();
+          finished = true;
+        }
         yield event;
       }
     }
@@ -234,6 +301,17 @@ export function* toEvents(message: unknown, cwd: string): Generator<ClaudeEvent>
       }
       return;
     case "user":
+      if (message.isReplay === true) {
+        const inner = isRecord(message.message) ? message.message.content : undefined;
+        const text =
+          typeof inner === "string"
+            ? inner
+            : contentOf(message)
+                .map((block) => (block.type === "text" && typeof block.text === "string" ? block.text : ""))
+                .join("");
+        yield { type: "replay", text };
+        return;
+      }
       for (const block of contentOf(message)) {
         if (block.type !== "tool_result") continue;
         const id = String(block.tool_use_id ?? "");
@@ -254,6 +332,7 @@ export function* toEvents(message: unknown, cwd: string): Generator<ClaudeEvent>
         text: typeof message.result === "string" ? message.result : "",
         durationMs: Number(message.duration_ms ?? 0),
         ...(contextUsage(message) ? { context: contextUsage(message)! } : {}),
+        ...(typeof message.queued_turn_count === "number" ? { queued: message.queued_turn_count } : {}),
       };
       return;
   }

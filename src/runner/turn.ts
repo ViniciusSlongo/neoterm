@@ -7,7 +7,7 @@ import { type MessagePart, messages, type RunTrigger, runs } from "../db/schema.
 import type { EventBus, Scope, TurnEvent } from "../events.ts";
 import type { McpHub } from "../mcp/hub.ts";
 import type { AgentRow } from "../store/conversations.ts";
-import { ClaudeError, type ClaudeTurn, runClaude } from "./claude.ts";
+import { ClaudeError, type ClaudeTurn, runClaude, TurnInput } from "./claude.ts";
 
 export type { TurnEvent } from "../events.ts";
 
@@ -62,6 +62,8 @@ export type TurnOutcome = {
   error?: string;
   runId: string;
   messageId?: string;
+  /** Mandadas durante o turno e não lidas (o turno caiu antes): quem chama manda de novo. */
+  leftover?: string[];
 };
 
 /**
@@ -109,12 +111,22 @@ export class TurnEngine {
   readonly #hub: McpHub | undefined;
   readonly #mcpUrl: () => string | undefined;
   readonly #running = new Map<string, number>();
+  /** A entrada dos turnos de conversa em andamento, por conversa. */
+  readonly #inputs = new Map<string, TurnInput>();
 
   constructor(deps: { db: Database; bus: EventBus; hub?: McpHub; mcpUrl?: () => string | undefined }) {
     this.#db = deps.db;
     this.#bus = deps.bus;
     this.#hub = deps.hub;
     this.#mcpUrl = deps.mcpUrl ?? (() => undefined);
+  }
+
+  /**
+   * Manda uma mensagem para o turno de conversa em andamento nesta conversa. `false` se não há um
+   * (aí ela espera o próximo turno, como sempre).
+   */
+  inject(conversationId: string, text: string): boolean {
+    return this.#inputs.get(conversationId)?.send(text) ?? false;
   }
 
   /** Os agentes rodando agora. */
@@ -163,6 +175,19 @@ export class TurnEngine {
         : undefined;
     const started = Date.now();
     const parts: MessagePart[] = [];
+    // Só a conversa com a pessoa aceita mensagens no meio do turno.
+    const input = spec.trigger === "chat" ? new TurnInput() : undefined;
+    if (input) this.#inputs.set(spec.conversationId, input);
+    // Ele leu uma mensagem nova: o que fez até aqui vira uma resposta, a mensagem entra depois dela,
+    // e o resto do turno segue numa resposta nova.
+    const onInjected = async (text: string) => {
+      if (parts.length > 0) {
+        await db.insert(messages).values({ conversationId: spec.conversationId, runId: run.id, author: "agent", agentId: spec.agentRow.id, text: lastText(parts), parts: parts.splice(0) });
+      }
+      await db.insert(messages).values({ conversationId: spec.conversationId, author: "person", text });
+      this.#bus.changed("messages", spec.scope);
+      emit({ type: "flush" });
+    };
     try {
       const base: Omit<ClaudeTurn, "sessionId" | "resume"> = {
         prompt: spec.prompt,
@@ -181,24 +206,25 @@ export class TurnEngine {
         }),
         addDirs: extraDirs(spec.agent, spec.cwd),
         ...(token && mcpUrl ? { mcp: { url: mcpUrl, token } } : {}),
+        ...(input ? { input } : {}),
       };
       let resultText: string;
       const outcome: StreamOutcome = {};
       const fresh = () => crypto.randomUUID();
       if (spec.session.id) {
         try {
-          resultText = await this.#stream({ ...base, sessionId: spec.session.id, resume: true }, parts, emit, outcome);
+          resultText = await this.#stream({ ...base, sessionId: spec.session.id, resume: true }, parts, emit, outcome, onInjected);
         } catch (error) {
           // A sessão guardada sumiu (alguém apagou o histórico do Claude Code): começa outra.
           if (!(error instanceof ClaudeError && !error.started)) throw error;
           const id = fresh();
           await spec.session.save(id);
-          resultText = await this.#stream({ ...base, sessionId: id, resume: false }, parts, emit, outcome);
+          resultText = await this.#stream({ ...base, sessionId: id, resume: false }, parts, emit, outcome, onInjected);
         }
       } else {
         const id = fresh();
         await spec.session.save(id);
-        resultText = await this.#stream({ ...base, sessionId: id, resume: false }, parts, emit, outcome);
+        resultText = await this.#stream({ ...base, sessionId: id, resume: false }, parts, emit, outcome, onInjected);
       }
       // O Claude Code compactou a sessão: fica dito na conversa, antes da resposta.
       if (outcome.compacted) {
@@ -245,8 +271,11 @@ export class TurnEngine {
         this.#bus.changed("messages", spec.scope);
       }
       emit({ type: "error", message: reason });
-      return { ok: false, text: lastText(parts), error: reason, runId: run.id };
+      const leftover = input?.close() ?? [];
+      return { ok: false, text: lastText(parts), error: reason, runId: run.id, ...(leftover.length ? { leftover } : {}) };
     } finally {
+      input?.close();
+      if (input && this.#inputs.get(spec.conversationId) === input) this.#inputs.delete(spec.conversationId);
       if (token) this.#hub?.revoke(token);
       const left = (this.#running.get(slug) ?? 1) - 1;
       if (left > 0) this.#running.set(slug, left);
@@ -256,7 +285,13 @@ export class TurnEngine {
   }
 
   /** Roda o Claude Code e junta o que ele fez em `parts`. Devolve o texto final. */
-  async #stream(turn: ClaudeTurn, parts: MessagePart[], emit: (event: TurnEvent) => void, outcome: StreamOutcome): Promise<string> {
+  async #stream(
+    turn: ClaudeTurn,
+    parts: MessagePart[],
+    emit: (event: TurnEvent) => void,
+    outcome: StreamOutcome,
+    onInjected: (text: string) => Promise<void>,
+  ): Promise<string> {
     const toolIndex = new Map<string, number>();
     for await (const event of runClaude(turn)) {
       switch (event.type) {
@@ -282,6 +317,10 @@ export class TurnEngine {
           break;
         case "compacted":
           outcome.compacted = true;
+          break;
+        case "injected":
+          await onInjected(event.text);
+          toolIndex.clear();
           break;
         case "result":
           if (!event.ok) throw new Error(event.text || "o Claude não terminou a resposta");

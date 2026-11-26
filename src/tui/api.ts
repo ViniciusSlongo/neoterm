@@ -123,10 +123,11 @@ export function httpApi(base: string = DAEMON_URL): NeotermApi {
         return;
       }
       // A conversa com um agente responde em SSE; o progresso chega pelos eventos, então só esvazia.
+      // Com ele respondendo, a mensagem entra na resposta em andamento (inject).
       const response = await fetch(`${base}${path(scope)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, inject: true }),
       });
       if (!response.ok) throw new Error(((await response.json()) as { error?: string }).error ?? "não enviou");
       void response.text().catch(() => {});

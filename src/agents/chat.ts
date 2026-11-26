@@ -2,7 +2,7 @@ import { agentKey, type Core } from "../core.ts";
 import { messages } from "../db/schema.ts";
 import type { TurnEvent } from "../events.ts";
 import type { TurnOutcome } from "../runner/turn.ts";
-import { conversationSession, ensureAgentRow, mainConversation, withNotices } from "../store/conversations.ts";
+import { conversationSession, ensureAgentRow, findAgentRow, mainConversation, withNotices } from "../store/conversations.ts";
 import { loadAgent } from "./identity.ts";
 
 /**
@@ -16,7 +16,7 @@ export async function chatWithAgent(
   onEvent?: (event: TurnEvent) => void,
 ): Promise<TurnOutcome> {
   const agent = await loadAgent(slug);
-  return core.engine.queue.run([agentKey(slug)], async () => {
+  const outcome = await core.engine.queue.run([agentKey(slug)], async () => {
     const row = await ensureAgentRow(core.db, slug);
     const conversation = await mainConversation(core.db, row.id);
     const prompt = await withNotices(core.db, conversation.id, row.id, text);
@@ -35,4 +35,18 @@ export async function chatWithAgent(
       ...(onEvent ? { onEvent } : {}),
     });
   });
+  // Mandadas durante o turno e não lidas (ele caiu antes): viram as próximas mensagens.
+  for (const pending of outcome.leftover ?? []) void chatWithAgent(core, slug, pending).catch(() => {});
+  return outcome;
+}
+
+/**
+ * A pessoa escreve com o agente no meio de uma resposta: a mensagem entra no turno em andamento, e
+ * ele a lê no próximo passo. `false` se não há resposta em andamento (aí vai pela fila normal).
+ */
+export async function injectIntoChat(core: Core, slug: string, text: string): Promise<boolean> {
+  const row = await findAgentRow(core.db, slug);
+  if (!row) return false;
+  const conversation = await mainConversation(core.db, row.id);
+  return core.engine.inject(conversation.id, text);
 }

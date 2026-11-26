@@ -222,6 +222,9 @@ function renderTurnEvent(event: TurnEvent, who?: string): boolean {
     case "error":
       console.log(`\n${fail(event.message)}`);
       return true;
+    case "flush":
+      // Uma mensagem nova entrou no meio da resposta (mandada pela interface): a resposta segue.
+      return false;
   }
 }
 

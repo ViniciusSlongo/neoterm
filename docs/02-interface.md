@@ -23,7 +23,9 @@
 | Rolar | roda do mouse, `↑↓`, `pgup`/`pgdn` |
 | Chamar agente (grupo) | `@nome` |
 
-Mensagens enviadas enquanto o agente responde vão para a fila e são respondidas em ordem.
+Mensagem enviada enquanto o agente trabalha entra na resposta em andamento: ele a lê no próximo
+passo (depois da ação atual) e a considera. Até ele ler, ela aparece em **na fila**; depois, no ponto
+da conversa em que ele leu.
 
 ## Notas
 
