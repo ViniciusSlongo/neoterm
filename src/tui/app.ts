@@ -1,4 +1,6 @@
+import { type Stats, unwatchFile, watchFile } from "node:fs";
 import { homedir } from "node:os";
+import { basename } from "node:path";
 import { Box, type DOMElement, Text, useApp, useBoxMetrics, useInput, usePaste, useWindowSize } from "ink";
 import { createElement as h, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MessagePart } from "../db/schema.ts";
@@ -16,9 +18,12 @@ import * as editor from "./editor.ts";
 import { countTasks, parseTask, toggleTask } from "../agents/tasks.ts";
 import { clipboardImage, expandImages, pastedImages, shortenImages } from "./images.ts";
 import { type Browser, browserKey, load as loadBrowser, newBrowser, renderBrowser } from "./browser.ts";
-import { referenceFor } from "./files.ts";
+import { displayFile, recentFiles, referenceFor } from "./files.ts";
+import { highlightChunks } from "./highlight.ts";
+import { expandTabs, findMatches, loadViewerFile, NEW_VIEW, renderViewerLines, type ViewerFile, viewerKey, type ViewerView } from "./viewer.ts";
+import { absolutePath } from "../config.ts";
 import { renderMarkdown } from "./markdown.ts";
-import { type Command, EFFORT_LABEL, matchCommands, parseCommand, parseEffortCommand } from "./commands.ts";
+import { type Command, EFFORT_LABEL, matchCommands, parseCommand, parseEffortCommand, parseViewCommand } from "./commands.ts";
 import { renderHelp } from "./help.ts";
 import { CONFIG_ROWS, CUSTOM_ROW, MODEL_OPTIONS, MODEL_ROW, renderConfig } from "./config.ts";
 import { ACCENTS, DEFAULT_ACCENT, isHexColor, setAccent } from "./theme.ts";
@@ -42,11 +47,16 @@ type Item =
   | { kind: "new-agent" }
   | { kind: "new-group" };
 
-type Mode = "chat" | "routines" | "form" | "attention" | "processes" | "help";
+type Mode = "chat" | "routines" | "form" | "attention" | "processes" | "help" | "viewer";
 type Live = { agent: string; parts: MessagePart[] };
+/**
+ * A lista de arquivos à direita: a da conversa de onde abriu, com a pasta onde o agente roda.
+ * `insert` (o :path) põe o caminho na mensagem; `open` (o :ver) abre o arquivo no visualizador.
+ */
+type Picker = { scope: string; workspace: string; browser: Browser; purpose: "insert" | "open" };
+/** O arquivo aberto no visualizador; `returnTo`: de onde veio (a lista de arquivos ou a conversa). */
+type Viewer = { path: string; display: string; file: ViewerFile | null; error?: string; returnTo: "files" | "main" };
 /** As notas abertas à direita: as de um agente, com o texto em edição e o que já está no arquivo. */
-/** O navegador do :path: o de pastas, mais a conversa de onde abriu e a pasta onde o agente roda. */
-type Picker = { scope: string; workspace: string; browser: Browser };
 type Notes = { slug: string; draft: editor.Draft; saved: string; path: string; saving: boolean; failed: boolean };
 type InkKey = Parameters<Parameters<typeof useInput>[0]>[1];
 
@@ -856,6 +866,14 @@ export function App({
     const text = override ?? expandImages(draft.text, images.current).trim();
     if (!text || !scope) return;
     clearDraft();
+    // :ver abre a lista de arquivos; :ver caminho abre o arquivo direto.
+    const viewCommand = parseViewCommand(text);
+    if (viewCommand) {
+      if (!viewCommand.path) return openPicker("open");
+      const workspace = scopeRoots()[0];
+      if (!workspace) return say("esta conversa não tem pastas");
+      return openViewer(absolutePath(viewCommand.path, workspace), workspace, "main");
+    }
     // :esforço [nível]: sem nível, diz o atual; com nível, muda o do agente.
     const effortCommand = parseEffortCommand(text);
     if (effortCommand) {
@@ -889,6 +907,8 @@ export function App({
         return openEditForm(scope);
       case "path":
         return openPicker();
+      case "ver":
+        return openPicker("open");
       case "notas":
         if (scope.kind !== "agent") return say("as notas são de cada agente: abra a conversa com um");
         return openNotes(scope.slug);
@@ -1284,19 +1304,36 @@ export function App({
     setPicker((current) => (current ? { ...current, browser } : current));
   };
 
-  const openPicker = () => {
-    if (!scope) return;
-    // Já aberto nesta conversa (você voltou para o input com tab): só volta para ele.
-    if (pickerRef.current?.scope === currentKey) return setFocus("files");
-    const roots =
-      scope.kind === "agent"
+  /** As pastas da conversa aberta: as do agente, ou a do grupo. A primeira é onde ele roda. */
+  const scopeRoots = (): string[] =>
+    !scope
+      ? []
+      : scope.kind === "agent"
         ? (state?.agents.find((agent) => agent.slug === scope.slug)?.folders ?? [])
         : [state?.groups.find((group) => group.slug === scope.slug)?.folder].filter((folder): folder is string => Boolean(folder));
+
+  const openPicker = (purpose: "insert" | "open" = "insert") => {
+    if (!scope) return;
+    // Já aberta nesta conversa, para o mesmo fim (você voltou para o input com tab): só volta para ela.
+    if (pickerRef.current?.scope === currentKey && pickerRef.current.purpose === purpose) return setFocus("files");
+    const roots = scopeRoots();
     if (roots.length === 0) return say("esta conversa não tem pastas");
-    const browser = newBrowser(roots);
-    setPicker({ scope: currentKey, workspace: roots[0]!, browser });
+    // No :ver, os arquivos que o agente leu ou mexeu nesta conversa ficam à mão, no topo.
+    const pinned = purpose === "open" ? recentFiles(fileToolDetails(), roots[0]!) : [];
+    const browser = newBrowser(roots, { pinned });
+    setPicker({ scope: currentKey, workspace: roots[0]!, browser, purpose });
     setFocus("files");
-    void pickerLoad(browser, roots.length === 1 ? roots[0]! : null);
+    void pickerLoad(browser, roots.length === 1 && pinned.length === 0 ? roots[0]! : null);
+  };
+
+  /** O caminho nas ferramentas de arquivo do agente nesta conversa, do mais recente ao mais antigo. */
+  const fileToolDetails = (): string[] => {
+    const tools = new Set(["Read", "Edit", "Write", "MultiEdit", "NotebookEdit"]);
+    const parts = [...messages.flatMap((message) => message.parts), ...(live[currentKey]?.parts ?? [])];
+    return parts
+      .filter((part): part is Extract<MessagePart, { type: "tool" }> => part.type === "tool" && tools.has(part.name))
+      .map((part) => part.detail)
+      .reverse();
   };
   const closePicker = () => {
     setPicker(null);
@@ -1327,9 +1364,146 @@ export function App({
     const action = browserKey(picker.browser, input, key, Math.max(pickerArea.height - 1, 1));
     if (action.type === "state") return setPicker({ ...picker, browser: action.browser });
     if (action.type === "load") return void pickerLoad(action.browser, action.dir, action.select);
-    if (action.type === "choose" || action.type === "mark") return insertReference(action.entry.path);
+    if (action.type === "choose" || action.type === "mark") {
+      if (picker.purpose === "insert") return insertReference(action.entry.path);
+      if (action.entry.dir) return void pickerLoad(picker.browser, action.entry.path);
+      return openViewer(action.entry.path, picker.workspace, "files");
+    }
     if (action.type === "close") return closePicker();
   };
+
+  // ---------- visualizador de arquivos (:ver) ----------
+  const [viewer, setViewer] = useState<Viewer | null>(null);
+  const [viewerView, setViewerView] = useState<ViewerView>(NEW_VIEW);
+  // As cores chegam em partes e preenchem o arquivo aberto; isto só pede o redesenho.
+  const [, setViewerColors] = useState(0);
+  const viewerAreaRef = useRef<DOMElement>(null);
+  const viewerArea = useBoxMetrics(viewerAreaRef);
+  // Cada abertura (ou recarga) é uma geração: a anterior para de colorir.
+  const viewerGeneration = useRef(0);
+
+  const loadViewer = useCallback((path: string, options: { reload?: boolean } = {}) => {
+    const generation = ++viewerGeneration.current;
+    loadViewerFile(path).then(
+      async (file) => {
+        if (generation !== viewerGeneration.current) return;
+        setViewer((current) => (current && current.path === path ? { ...current, file, error: undefined } : current));
+        if (options.reload) say("arquivo atualizado");
+        if (!file.language || file.note) return;
+        try {
+          for await (const chunk of highlightChunks(file.raw, file.language.id)) {
+            if (generation !== viewerGeneration.current) return;
+            chunk.lines.forEach((segments, at) => {
+              file.styled[chunk.from + at] = expandTabs(segments);
+            });
+            setViewerColors((value) => value + 1);
+          }
+        } catch {
+          // Sem cores, mas aberto.
+        }
+      },
+      (error: Error) => {
+        if (generation === viewerGeneration.current) setViewer((current) => (current && current.path === path ? { ...current, error: error.message } : current));
+      },
+    );
+  }, [say]);
+
+  const openViewer = (path: string, workspace: string, returnTo: "files" | "main") => {
+    setViewer({ path, display: displayFile(path, workspace), file: null, returnTo });
+    setViewerView(NEW_VIEW);
+    setMode("viewer");
+    loadViewer(path);
+  };
+  const closeViewer = () => {
+    viewerGeneration.current++;
+    const back = viewer?.returnTo === "files" && pickerRef.current ? "files" : "main";
+    setViewer(null);
+    setMode("chat");
+    setFocus(back);
+  };
+  // O agente mudou o arquivo aberto: abre de novo, no mesmo lugar.
+  useEffect(() => {
+    if (mode !== "viewer" || !viewer) return;
+    const path = viewer.path;
+    const changed = (current: Stats, previous: Stats) => {
+      if (current.mtimeMs !== previous.mtimeMs || current.size !== previous.size) loadViewer(path, { reload: true });
+    };
+    watchFile(path, { interval: 1000, persistent: false }, changed);
+    return () => unwatchFile(path, changed);
+  }, [mode, viewer?.path, loadViewer]);
+
+  const viewerMatches = useMemo(
+    () => (viewer?.file && viewerView.term ? findMatches(viewer.file.lines, viewerView.term) : []),
+    [viewer?.file, viewerView.term],
+  );
+  const handleViewer = (input: string, key: InkKey) => {
+    if (!viewer?.file) {
+      if (key.escape || input === "q") closeViewer();
+      return;
+    }
+    const action = viewerKey(viewerView, viewer.file, viewerMatches, input, key, Math.max(viewerArea.height, 1));
+    if (action.type === "close") return closeViewer();
+    if (action.type === "view") {
+      setViewerView(action.view);
+      if (action.notFound) say(`nada com "${action.view.term}"`);
+    }
+  };
+
+  /** O visualizador em tela cheia: o cabeçalho do arquivo e as linhas à vista. */
+  function renderViewerScreen(): ReactNode {
+    if (!viewer) return null;
+    const file = viewer.file;
+    const height = viewerArea.height;
+    const total = file?.lines.length ?? 0;
+    const top = Math.min(viewerView.top, Math.max(total - Math.max(height, 1), 0));
+    const count = (value: number) => value.toLocaleString("pt-BR");
+    const about = file
+      ? ` · ${viewer.display} · ${file.language?.name ?? "texto"} · ${count(total)} ${total === 1 ? "linha" : "linhas"}${file.note ? ` · ${file.note}` : ""}`
+      : ` · ${viewer.display}`;
+    const right =
+      viewerView.input !== null
+        ? h(Text, null, h(Text, { color: theme.accent }, `/${viewerView.input}`), h(Text, { inverse: true }, " "))
+        : h(
+            Text,
+            { color: theme.muted },
+            viewerView.term ? (viewerMatches.length ? `"${viewerView.term}" ${viewerView.current + 1}/${viewerMatches.length} · ` : `"${viewerView.term}" nada · `) : "",
+            file && height > 0 ? `${count(top + 1)}–${count(Math.min(top + height, total))} de ${count(total)}` : "",
+          );
+    const content = viewer.error
+      ? [h(Text, { key: "error", color: theme.red, wrap: "wrap" }, `não abri ${viewer.display}: ${viewer.error}`)]
+      : !file
+        ? [h(Text, { key: "loading", color: theme.muted }, "abrindo…")]
+        : renderViewerLines(file, { top, left: viewerView.left, width: viewerArea.width, height, matches: viewerMatches, current: viewerView.current });
+    return h(
+      Box,
+      { flexDirection: "column", flexGrow: 1, flexShrink: 1, flexBasis: 0, paddingX: 1 },
+      h(
+        Box,
+        {
+          justifyContent: "space-between",
+          flexShrink: 0,
+          marginTop: 1,
+          borderStyle: "single",
+          borderTop: false,
+          borderLeft: false,
+          borderRight: false,
+          borderColor: theme.border,
+        },
+        h(
+          Box,
+          { flexShrink: 1, overflow: "hidden" },
+          h(
+            Text,
+            { wrap: "truncate-end" },
+            h(Text, { bold: true, color: theme.onAccent, backgroundColor: theme.accent }, ` ${file?.name ?? basename(viewer.path)} `),
+            h(Text, { color: theme.muted }, about),
+          ),
+        ),
+        h(Box, { flexShrink: 0, marginLeft: 2 }, right),
+      ),
+      h(Box, { ref: viewerAreaRef, flexDirection: "column", flexGrow: 1, flexShrink: 1, flexBasis: 0, overflow: "hidden" }, ...content),
+    );
+  }
 
   usePaste(paste, { isActive: mode === "chat" && focus === "main" && scope !== null });
   usePaste((text) => editNotes((draft) => editor.insert(draft, text.replace(/\r\n?/g, "\n"))), {
@@ -1337,6 +1511,7 @@ export function App({
   });
 
   useInput((input, key) => {
+    if (mode === "viewer") return handleViewer(input, key);
     if (mode === "form") return handleForm(input, key);
     if (mode === "help") {
       if (key.escape || key.return || input === "q" || input === "?") return closeHelp();
@@ -1400,12 +1575,12 @@ export function App({
   /** O navegador de arquivos, à direita da conversa, no lugar das notas enquanto está aberto. */
   function renderPicker(open: Picker): ReactNode {
     return renderBrowser(open.browser, {
-      title: "ARQUIVOS",
+      title: open.purpose === "open" ? "ABRIR" : "ARQUIVOS",
       width: Math.max(Math.floor(mainWidth * 0.4), 28),
       height: pickerArea.height,
       focused: focus === "files",
       areaRef: pickerAreaRef,
-      footer: "enter abre · h sobe · / filtra · esc fecha",
+      footer: open.purpose === "open" ? "enter abre · ← sobe · / filtra · esc fecha" : "enter abre · h sobe · / filtra · esc fecha",
     });
   }
 
@@ -1859,7 +2034,9 @@ export function App({
   // ---------- rodapé ----------
   let hints: string;
   const removeHint = form?.remove ? " · ctrl+d exclui" : "";
-  if (mode === "form" && form?.confirmingRemove) {
+  if (mode === "viewer") {
+    hints = viewerView.input !== null ? "digite a busca · enter procura · esc desiste" : "↑↓ ←→ rolam · / busca · n próxima · esc fecha";
+  } else if (mode === "form" && form?.confirmingRemove) {
     hints = "ctrl+d de novo exclui · qualquer outra tecla desiste";
   } else if (mode === "form" && choosingFolders) {
     hints = "↑↓ anda · espaço escolhe · → entra · ← sobe · esc fecha a lista · tab próximo · ctrl+s salva";
@@ -1869,7 +2046,9 @@ export function App({
   else if (focus === "files") {
     hints = picker?.browser.filter !== null
       ? "digite para filtrar · ↑↓ escolhe · enter abre · esc limpa o filtro"
-      : "↑↓ anda · → ou enter abre/insere · ← sobe · / filtra · tab conversa · esc fecha";
+      : picker?.purpose === "open"
+        ? "↑↓ anda · enter abre o arquivo · ← sobe · / filtra · esc fecha"
+        : "↑↓ anda · → ou enter abre/insere · ← sobe · / filtra · tab conversa · esc fecha";
   } else if (mode === "help") hints = "↑↓ ou roda do mouse rolam · esc volta";
   else if (focus === "notes") hints = `ctrl+t tarefa · ctrl+p ${notesPinned ? "solta" : "fixa ao lado"} · ctrl+n conversa · esc ${notesPinned ? "volta" : "fecha"}`;
   else if (focus === "sidebar") hints = "↑↓ enter abre · e edita · n agente · g grupo · ? ajuda";
@@ -1891,7 +2070,8 @@ export function App({
   return h(
     Box,
     { flexDirection: "column", width: columns, height: Math.max(rows - 1, 12) },
-    h(
+    // Um arquivo aberto ocupa a tela toda, sem a lateral: mais largura para o código.
+    mode === "viewer" ? renderViewerScreen() : h(
       Box,
       { flexDirection: "row", flexGrow: 1, flexShrink: 1, flexBasis: 0, overflow: "hidden" },
       h(

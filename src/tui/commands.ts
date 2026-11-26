@@ -3,7 +3,7 @@
  * docs leem daqui. Funcionam com ":" ou "/" na frente (:notas e /notas são o mesmo).
  */
 
-export type CommandName = "esforço" | "config" | "ajuda" | "notas" | "path" | "processos" | "editar" | "rotinas" | "pausar" | "retomar" | "painel" | "mcp";
+export type CommandName = "ver" | "esforço" | "config" | "ajuda" | "notas" | "path" | "processos" | "editar" | "rotinas" | "pausar" | "retomar" | "painel" | "mcp";
 
 export type Command = {
   name: CommandName;
@@ -20,6 +20,7 @@ export const COMMANDS: Command[] = [
   { name: "ajuda", aliases: ["help", "?"], description: "esta tela: comandos e teclas" },
   { name: "notas", aliases: ["notes"], description: "suas anotações sobre o agente, à direita", agentOnly: true },
   { name: "path", aliases: ["arquivo"], description: "escolhe um arquivo do escopo e põe o caminho na mensagem" },
+  { name: "ver", aliases: ["abrir", "view", "open"], description: "abre um arquivo para ler, com as cores do código" },
   { name: "processos", aliases: ["ps"], description: "memória e serviços que o agente deixou rodando", agentOnly: true },
   { name: "editar", aliases: ["edit"], description: "muda (ou exclui) o agente ou o grupo" },
   { name: "rotinas", aliases: ["routines"], description: "as rotinas desta conversa" },
@@ -87,6 +88,14 @@ export function parseEffortCommand(text: string): { level: string | null } | nul
 
 export const EFFORT_LABEL: Record<string, string> = { low: "baixo", medium: "médio", high: "alto", xhigh: "muito alto", max: "máximo" };
 
+/** `:ver` sozinho abre a lista de arquivos; `:ver caminho` abre o arquivo direto. */
+export function parseViewCommand(text: string): { path: string | null } | null {
+  const match = /^[:/](ver|abrir|view|open)(?:\s+(.+))?$/i.exec(text.trim());
+  if (!match) return null;
+  const path = match[2]?.trim().replace(/^["']|["']$/g, "") ?? "";
+  return { path: path || null };
+}
+
 /** As teclas, por lugar, para a tela de ajuda e os docs. */
 export const KEYS: { where: string; keys: [string, string][] }[] = [
   {
@@ -131,6 +140,16 @@ export const KEYS: { where: string; keys: [string, string][] }[] = [
       ["ctrl+p", "fixa ao lado: ficam abertas em todo agente"],
       ["ctrl+n, tab", "volta à conversa"],
       ["esc", "fecha (fixadas: volta à conversa)"],
+    ],
+  },
+  {
+    where: "arquivo aberto (:ver)",
+    keys: [
+      ["↑↓, pgup/pgdn", "rolam"],
+      ["←→", "rolam de lado"],
+      ["g, G", "começo, fim"],
+      ["/", "busca; n próxima, N anterior"],
+      ["esc", "fecha"],
     ],
   },
   {

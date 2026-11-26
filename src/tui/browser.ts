@@ -25,11 +25,13 @@ export type Browser = {
   dirsOnly: boolean;
   /** A primeira linha à vista, para a seleção continuar visível ao rolar. */
   top: number;
+  /** Arquivos à mão no topo (os que o agente mexeu na conversa), antes das pastas. */
+  pinned: Entry[];
   error?: string;
 };
 
-export function newBrowser(roots: string[], options: { dirsOnly?: boolean } = {}): Browser {
-  return { roots, dir: null, entries: [], index: 0, filter: null, hidden: false, dirsOnly: options.dirsOnly ?? false, top: 0 };
+export function newBrowser(roots: string[], options: { dirsOnly?: boolean; pinned?: Entry[] } = {}): Browser {
+  return { roots, dir: null, entries: [], index: 0, filter: null, hidden: false, dirsOnly: options.dirsOnly ?? false, top: 0, pinned: options.pinned ?? [] };
 }
 
 /** O navegador com `dir` aberto (ou o topo, com null) e `select` selecionado, se estiver lá. */
@@ -37,7 +39,7 @@ export async function load(browser: Browser, dir: string | null, select?: string
   let entries: Entry[] = [];
   let error: string | undefined;
   try {
-    entries = dir === null ? rootEntries(browser.roots) : await listDir(dir, browser.hidden);
+    entries = dir === null ? [...browser.pinned, ...rootEntries(browser.roots)] : await listDir(dir, browser.hidden);
     if (browser.dirsOnly) entries = entries.filter((entry) => entry.dir);
   } catch (problem) {
     const code = (problem as NodeJS.ErrnoException).code;
@@ -76,7 +78,8 @@ function up(browser: Browser): BrowserAction {
   if (browser.dir === null) return { type: "none" };
   const parent = parentOf(browser.dir, browser.roots);
   if (parent !== null) return { type: "load", browser, dir: parent, select: browser.dir };
-  return browser.roots.length > 1 ? { type: "load", browser, dir: null, select: browser.dir } : { type: "none" };
+  // Na raiz: sobe para o topo, se ele tiver mais que uma pasta (várias, ou os arquivos à mão).
+  return browser.roots.length > 1 || browser.pinned.length > 0 ? { type: "load", browser, dir: null, select: browser.dir } : { type: "none" };
 }
 
 /** O que uma tecla faz no navegador. `page`: quantas linhas cabem, para pgup/pgdn. */
@@ -138,7 +141,8 @@ export function renderBrowser(
       : visible.slice(top, top + height).map((entry, at) => {
           const active = top + at === index;
           const bg = active ? { backgroundColor: theme.selected } : {};
-          const name = browser.dir === null ? entry.path.replace(homedir(), "~") : entry.name;
+          // No topo, as pastas aparecem com o caminho; os arquivos à mão, com o nome que vieram.
+          const name = browser.dir === null && entry.dir ? entry.path.replace(homedir(), "~") : entry.name;
           const mark = options.marked?.has(entry.path) ? "✓" : entry.dir ? "▸" : " ";
           const label = `${mark} ${name}${entry.dir ? "/" : ""}`;
           return h(

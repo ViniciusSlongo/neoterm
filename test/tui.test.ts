@@ -598,6 +598,51 @@ describe("a interface", () => {
     await seen("┃ :)");
   });
 
+  it(":ver abre arquivos: os que o agente mexeu ficam no topo; abre em tela cheia, rola, busca e recarrega sozinho", async () => {
+    const root = (await t.neoterm.state()).agents.find((agent) => agent.slug === "analista")!.folders[0]!;
+    const path = join(root, "codigo.ts");
+    writeFileSync(path, Array.from({ length: 60 }, (_, at) => `export const valor${at} = ${at}; // linha ${at + 1}`).join("\n"));
+    setScript({ analista: "!ferramenta Read codigo.ts\nli o código" });
+    await type("lê o código");
+    await press(KEY.enter);
+    await seen("● li o código");
+    setScript({});
+    await type(":ver");
+    await press(KEY.enter);
+    await seen("ABRIR");
+    await seen(/▌\s+codigo\.ts/);
+    await press(KEY.enter);
+    await seen(/codigo\.ts .*TypeScript · 60 linhas/);
+    await seen(/1\s+export const valor0 = 0;/);
+    // Tela cheia: sem a lateral.
+    assert.doesNotMatch(frame(), /AGENTES/);
+    await press(KEY.down);
+    await seen(/2–\d+ de 60/);
+    // / busca e pula para a ocorrência.
+    await type("/");
+    await type("linha 50");
+    await press(KEY.enter);
+    await seen(/"linha 50" 1\/1/);
+    await seen("valor49");
+    // O arquivo mudou no disco: abre de novo sozinho.
+    writeFileSync(path, "export const novo = 1;\n");
+    await seen("arquivo atualizado", 8000);
+    await seen(/1\s+export const novo = 1;/);
+    // esc limpa a busca; de novo, volta para a lista; de novo, fecha a lista.
+    await press(KEY.escape);
+    await press(KEY.escape);
+    await seen("ABRIR");
+    await press(KEY.escape);
+    await waitFor(() => !frame().includes("ABRIR"));
+    await seen("mensagem para analista");
+    // :ver caminho abre direto; esc volta para a conversa.
+    await type(":ver codigo.ts");
+    await press(KEY.enter);
+    await seen(/codigo\.ts .*TypeScript · 1 linha/);
+    await press(KEY.escape);
+    await seen("mensagem para analista");
+  });
+
   it("troca de agente pela lateral", async () => {
     await press(KEY.escape);
     await press(KEY.down, KEY.enter);

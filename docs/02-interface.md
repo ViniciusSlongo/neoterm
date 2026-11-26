@@ -50,6 +50,13 @@ Salvam sozinhas em `~/.neoterm/agents/<nome>/notas.txt`. O agente não as vê.
 | Processos | `s`, `:processos` | memória e serviços do agente; `x` encerra |
 | Rotinas | `r`, `:rotinas` | rotinas da conversa |
 | Ajuda | `?`, `:ajuda` | comandos e teclas |
+| Arquivo | `:ver` | o conteúdo em tela cheia, com as cores do código (tema Dark+) |
+
+## Arquivos
+
+`:ver` abre a lista de arquivos da conversa. No topo ficam os que o agente leu ou mexeu; `enter`
+abre em tela cheia, com números de linha e as cores do código. Se o arquivo mudar enquanto está
+aberto, ele recarrega sozinho. `:ver src/app.ts` abre direto.
 
 ## Formulários
 

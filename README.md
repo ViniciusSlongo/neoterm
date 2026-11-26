@@ -42,6 +42,7 @@ neoterm
 | Consulta entre agentes | "pergunta ao dev …" na conversa |
 | Esforço por agente | `:esforço alto` |
 | Notas e tarefas | `ctrl+n`; `ctrl+t` cria tarefa |
+| Ver arquivos com as cores do código | `:ver` |
 | Processos e memória | `:processos` |
 | Painel | `d` |
 | Integrações (MCP) | `i` |

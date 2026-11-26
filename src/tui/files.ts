@@ -1,4 +1,6 @@
+import { statSync } from "node:fs";
 import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 
 /*
@@ -49,6 +51,36 @@ export function referenceFor(path: string, workspace: string): string {
   const rel = relative(workspace, path);
   const text = rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : path;
   return /\s/.test(text) ? `"${text}"` : text;
+}
+
+/** Um arquivo para mostrar: relativo à pasta do agente, se estiver nela; senão, com ~. */
+export function displayFile(path: string, workspace: string): string {
+  const rel = relative(workspace, path);
+  return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : path.replace(homedir(), "~");
+}
+
+/**
+ * Os arquivos que o agente leu ou mexeu (o detalhe das ferramentas Read, Edit, Write…), do mais
+ * recente para o mais antigo, sem repetir e só os que ainda existem.
+ */
+export function recentFiles(details: readonly string[], workspace: string, limit = 8): Entry[] {
+  const found: Entry[] = [];
+  const seen = new Set<string>();
+  for (const detail of details) {
+    if (found.length >= limit) break;
+    // Um detalhe cortado (…) não é um caminho inteiro.
+    if (!detail || detail.endsWith("…")) continue;
+    const path = detail.startsWith("~/") ? join(homedir(), detail.slice(2)) : isAbsolute(detail) ? detail : join(workspace, detail);
+    if (seen.has(path)) continue;
+    seen.add(path);
+    try {
+      if (!statSync(path).isFile()) continue;
+    } catch {
+      continue;
+    }
+    found.push({ name: displayFile(path, workspace), path, dir: false });
+  }
+  return found;
 }
 
 /** O caminho para mostrar no topo do navegador: a partir do nome da pasta do escopo. */

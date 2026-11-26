@@ -20,6 +20,7 @@ Também dá para escrever o comando inteiro, com `:` ou `/` na frente.
 | `:ajuda` | `:help`, `:?` | comandos e teclas |
 | `:notas` | `:notes` | notas do agente |
 | `:path` | `:arquivo` | insere o caminho de um arquivo |
+| `:ver` | `:abrir`, `:view`, `:open` | abre um arquivo para ler (`:ver src/app.ts` abre direto) |
 | `:processos` | `:ps` | memória e serviços do agente |
 | `:editar` | `:edit` | edita ou exclui o agente ou grupo |
 | `:esforço` | `:esforco`, `:effort` | mostra ou muda o esforço: `:esforço alto` |
@@ -74,6 +75,16 @@ Também dá para escrever o comando inteiro, com `:` ou `/` na frente.
 | `espaço` | escolhe |
 | `/` | filtra |
 | `.` | mostra ocultos |
+| `esc` | fecha |
+
+## Arquivo aberto (`:ver`)
+
+| Tecla | O que faz |
+| --- | --- |
+| `↑↓`, `pgup`/`pgdn` | rolam |
+| `←→` | rolam de lado |
+| `g`, `G` | começo, fim |
+| `/` | busca; `n` próxima, `N` anterior |
 | `esc` | fecha |
 
 ## Outras telas
