@@ -49,9 +49,10 @@ describe("conversa com um agente", () => {
     assert.equal(outcome.ok, true);
     const { body } = await t.api<{ messages: { parts: unknown[] }[] }>("/agents/ana/messages?limit=1");
     assert.deepEqual(body.messages[0]?.parts, [
-      { type: "tool", name: "Read", detail: "dados.csv" },
+      { type: "tool", id: "toolu_1", name: "Read", detail: "dados.csv" },
       {
         type: "tool",
+        id: "toolu_2",
         name: "Edit",
         detail: "/srv/x.txt",
         error: "File is in a directory that is denied by your permission settings.",

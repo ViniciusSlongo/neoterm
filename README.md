@@ -40,6 +40,7 @@ neoterm
 | Rotinas | "todo dia às 9h, …" na conversa, ou `r` |
 | Grupos | `g` cria; `@nome` chama um agente |
 | Consulta entre agentes | "pergunta ao dev …" na conversa |
+| Subagentes em paralelo | cada um numa linha, com o andamento |
 | Esforço por agente | `:effort high` |
 | Notas e tarefas | `ctrl+n`; `ctrl+t` cria tarefa |
 | Ver arquivos com as cores do código | `:open` |

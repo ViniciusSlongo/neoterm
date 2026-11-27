@@ -127,6 +127,26 @@ function renderParts(parts: MessagePart[], keyPrefix: string): ReactNode[] {
       ];
     }
     const name = part.name.replace(/^mcp__neoterm__/, "");
+    // Um subagente: uma linha com o andamento dele, em vez das ações (que rodam em paralelo).
+    if (part.task) {
+      const task = part.task;
+      const actions = `${task.actions} ${task.actions === 1 ? "ação" : "ações"}`;
+      const status =
+        task.status === "running"
+          ? [h(Spinner, { key: "s", color: theme.accent, after: " " }), h(Text, { key: "a", color: theme.muted }, `${actions}${task.last ? ` · ${task.last}` : ""}`)]
+          : task.status === "completed"
+            ? [h(Text, { key: "s", color: theme.green }, "✓ "), h(Text, { key: "a", color: theme.muted }, actions)]
+            : [h(Text, { key: "s", color: theme.red }, "✗ "), h(Text, { key: "a", color: theme.muted }, `${task.status === "failed" ? "falhou" : "parou"} · ${actions}`)];
+      return [
+        h(
+          Text,
+          { key: `${keyPrefix}u${index}`, wrap: "truncate-end" },
+          h(Text, { color: theme.muted }, `  ⎿ ${name.padEnd(5)}`),
+          `  ${part.detail}  `,
+          ...status,
+        ),
+      ];
+    }
     const lines = [
       h(
         Text,
@@ -417,7 +437,15 @@ export function App({
             const existing = next[key] ?? { agent: event.agent, parts: [] };
             const parts = [...existing.parts];
             if (turn.type === "text") parts.push({ type: "text", text: turn.text });
-            if (turn.type === "tool") parts.push({ type: "tool", name: turn.name, detail: turn.detail });
+            if (turn.type === "tool") {
+              parts.push({ type: "tool", name: turn.name, detail: turn.detail, ...(turn.id ? { id: turn.id } : {}), ...(turn.task ? { task: turn.task } : {}) });
+            }
+            // Um subagente da resposta em andamento avançou ou terminou.
+            if (turn.type === "task") {
+              const at = parts.findIndex((part) => part.type === "tool" && part.id === turn.id);
+              const part = parts[at];
+              if (part?.type === "tool") parts[at] = { ...part, task: turn.task };
+            }
             if (turn.type === "tool_error") {
               const last = parts.findLastIndex((part) => part.type === "tool" && part.name === turn.name);
               const part = parts[last];
@@ -1804,9 +1832,14 @@ export function App({
         ? h(Text, { color: contextRatio >= 0.8 ? theme.amber : theme.muted }, ` · contexto ${Math.round(contextRatio * 100)}%`)
         : null;
     const services = leftOver ? h(Text, { color: theme.amber }, ` · ◆ ${leftOver} ${leftOver === 1 ? "serviço" : "serviços"}`) : null;
+    // Subagentes rodando agora: os da resposta ao vivo e os das respostas já guardadas.
+    const subagents = [...messages.slice(-20).flatMap((message) => message.parts), ...(live[currentKey]?.parts ?? [])].filter(
+      (part) => part.type === "tool" && part.task?.status === "running",
+    ).length;
+    const subagentMark = subagents && agentState.state === "running" ? h(Text, { color: theme.accent }, ` · ${subagents} ${subagents === 1 ? "subagente" : "subagentes"}`) : null;
     headerRight =
       agentState.state === "running"
-        ? h(Text, null, h(Text, { color: theme.green }, "● "), h(Text, { color: theme.muted }, `rodando${memory}`), contextMark, services)
+        ? h(Text, null, h(Text, { color: theme.green }, "● "), h(Text, { color: theme.muted }, `rodando${memory}`), subagentMark, contextMark, services)
         : agentState.state === "paused"
           ? h(Text, null, h(Text, { color: theme.amber }, "‖ pausado"), h(Text, { color: theme.muted }, memory), contextMark, services)
           : h(

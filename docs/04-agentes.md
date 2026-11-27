@@ -66,6 +66,15 @@ O agente guarda fatos com `remember` e tira com `forget`, no `MEMORY.md`. Peça 
 Peça na conversa: "pergunta ao dev onde está a planilha". O agente consulta o outro com
 `ask_agent` e responde com o que ele disse. A troca fica na conversa do consultado.
 
+## Subagentes
+
+Quando o agente divide o trabalho em subagentes (a ferramenta Agent do Claude Code), cada um aparece
+numa linha da resposta, com o andamento: quantas ações fez, a última, e ✓ ao terminar. O cabeçalho
+mostra quantos estão rodando.
+
+Os de segundo plano continuam depois que o agente responde; quando terminam, ele responde de novo
+com o resultado. Dá para seguir conversando enquanto isso.
+
 ## Processos
 
 | O quê | Como |

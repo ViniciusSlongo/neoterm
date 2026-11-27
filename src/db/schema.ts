@@ -6,10 +6,26 @@ import { index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-o
  * escopo) fica no AGENT.md dele, que a pessoa edita; aqui ele é só um id ligado à pasta pelo `slug`.
  */
 
+/**
+ * Um subagente (a ferramenta Agent do Claude Code): o que ele está fazendo, em paralelo com o
+ * agente. As ações dele não entram na resposta; contam aqui.
+ */
+export type SubagentTask = {
+  status: "running" | "completed" | "failed" | "stopped";
+  /** Quantas ferramentas ele já usou. */
+  actions: number;
+  /** A última coisa que fez. */
+  last?: string;
+  /** O que ele relatou ao terminar. */
+  summary?: string;
+  /** Lançado em segundo plano: segue depois que o agente responde. */
+  background?: boolean;
+};
+
 /** Um pedaço do que o agente fez num turno, na ordem: palavras, ou uma ferramenta que usou. */
 export type MessagePart =
   | { type: "text"; text: string }
-  | { type: "tool"; name: string; detail: string; error?: string };
+  | { type: "tool"; name: string; detail: string; error?: string; id?: string; task?: SubagentTask };
 
 /**
  * Quem escreveu: a pessoa, um agente, uma rotina (a instrução que disparou) ou o próprio neoterm

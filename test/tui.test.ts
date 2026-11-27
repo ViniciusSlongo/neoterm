@@ -677,6 +677,20 @@ describe("a interface", () => {
     setScript({});
   });
 
+  it("subagentes em paralelo: uma linha cada, com o andamento e o total no cabeçalho, sem despejar as ações", async () => {
+    setScript({ analista: "!subagente frente A | 4 | 250 | fundo\n!subagente frente B | 2 | 250 | fundo\nlancei as frentes" });
+    await type("divide o trabalho");
+    await press(KEY.enter);
+    await seen("● lancei as frentes");
+    await seen(/⎿ Agent\s+frente A\s+[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/);
+    await seen(/rodando.*2 subagentes/);
+    assert.doesNotMatch(frame(), /⎿ Bash\s+passo/);
+    await seen("subagentes terminaram: frente B, frente A", 15_000);
+    await seen(/⎿ Agent\s+frente A\s+✓ 4 ações/);
+    await seen(/⎿ Agent\s+frente B\s+✓ 2 ações/);
+    setScript({});
+  });
+
   it("troca de agente pela lateral", async () => {
     await press(KEY.escape);
     await press(KEY.down, KEY.enter);

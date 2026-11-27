@@ -10,6 +10,11 @@
 //   !falhar <mensagem>             morre no meio, sem resultado
 //   !erro <mensagem>               termina com resultado de erro
 //   !dormir <ms>                   espera
+//   !subagente <descrição> | <ações> | <ms por ação> [| fundo]
+//                                  lança um subagente (Agent); "fundo" em segundo plano, e aí o agente
+//                                  responde de novo quando os subagentes terminam
+//   !vazio                         uma resposta vazia (como a de um aviso interno do Claude Code)
+//   !cair                          sai logo depois de responder, com os subagentes ainda rodando
 //   !plano <uso> <minutos>         o uso da janela de 5 horas (0 a 1) e daqui a quantos minutos ela renova (negativo: já renovou)
 //   !compactar                     a sessão é compactada no meio (compact_boundary)
 //   !contexto <tokens>             o contexto informado no fim (sem isto, cresce 2 mil por mensagem)
@@ -197,6 +202,43 @@ function drain() {
 
 const reply = [];
 let contextTokens;
+// Os subagentes em segundo plano, e os que já terminaram.
+const backgroundWork = [];
+const finishedSubagents = [];
+let exitAfterAnswer = false;
+
+/** Um subagente: as ações dele saem marcadas com a ferramenta Agent que o lançou. */
+async function subagent(description, actions, delay, background) {
+  const id = `toolu_agent_${++toolCounter}`;
+  out({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", id, name: "Agent", input: { description, prompt: description, subagent_type: "general-purpose", ...(background ? { run_in_background: true } : {}) } }] },
+    session_id: sessionId,
+  });
+  const work = async () => {
+    for (let step = 1; step <= actions; step++) {
+      await sleep(delay);
+      const toolId = `toolu_sub_${++toolCounter}`;
+      out({ type: "assistant", parent_tool_use_id: id, message: { content: [{ type: "tool_use", id: toolId, name: "Bash", input: { command: `passo ${step} de ${description}` } }] }, session_id: sessionId });
+      out({ type: "user", parent_tool_use_id: id, message: { content: [{ type: "tool_result", tool_use_id: toolId, content: "ok" }] }, session_id: sessionId });
+      if (background) out({ type: "system", subtype: "task_progress", task_id: `task_${id}`, tool_use_id: id, description: `passo ${step}` });
+    }
+    out({ type: "assistant", parent_tool_use_id: id, message: { content: [{ type: "text", text: `relatório de ${description}` }] }, session_id: sessionId });
+  };
+  if (!background) {
+    await work();
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: `relatório de ${description}` }] }, session_id: sessionId });
+    return;
+  }
+  out({ type: "system", subtype: "task_started", task_id: `task_${id}`, tool_use_id: id, description, task_type: "local_agent" });
+  out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: "Async agent launched successfully." }] }, session_id: sessionId });
+  backgroundWork.push(
+    work().then(() => {
+      out({ type: "system", subtype: "task_notification", task_id: `task_${id}`, tool_use_id: id, status: "completed", summary: `relatório de ${description}` });
+      finishedSubagents.push(description);
+    }),
+  );
+}
 for (const line of source.split("\n")) {
   const directive = /^!(\S+)\s*(.*)$/.exec(line.trim());
   if (!directive) {
@@ -214,6 +256,13 @@ for (const line of source.split("\n")) {
     reply.push(`[${tool}] ${await callMcp(tool, args)}`);
   } else if (name === "sessao") {
     reply.push(`sessão com ${history.length} mensagens`);
+  } else if (name === "subagente") {
+    const [description, actions = "2", delay = "50", mode = ""] = rest.split("|").map((piece) => piece.trim());
+    await subagent(description, Number(actions), Number(delay), mode === "fundo");
+  } else if (name === "vazio") {
+    out({ type: "result", subtype: "success", is_error: false, result: "", duration_ms: 1, session_id: sessionId });
+  } else if (name === "cair") {
+    exitAfterAnswer = true;
   } else if (name === "plano") {
     const [use, minutes] = rest.split(" ").map(Number);
     planEvent(use, Math.round(minutes * 60));
@@ -255,6 +304,18 @@ out({
   usage: { input_tokens: 5, cache_read_input_tokens: contextTokens ?? history.length * 2000, cache_creation_input_tokens: 100, output_tokens: 50 },
   modelUsage: { "claude-haiku-5-5": { contextWindow: 200000 } },
 });
+
+if (exitAfterAnswer) process.exit(0);
+
+// Com subagentes em segundo plano, o Claude Code espera eles terminarem e acorda o agente, que
+// responde de novo.
+if (backgroundWork.length > 0) {
+  await Promise.all(backgroundWork);
+  out({ type: "system", subtype: "init", session_id: sessionId, model: option("--model") ?? "fake", tools, cwd: process.cwd() });
+  const followUp = `subagentes terminaram: ${finishedSubagents.join(", ")}`;
+  out({ type: "assistant", message: { content: [{ type: "text", text: followUp }] }, session_id: sessionId });
+  out({ type: "result", subtype: "success", is_error: false, result: followUp, duration_ms: 7, session_id: sessionId });
+}
 
 // O que chega depois da resposta vira o turno seguinte, até a entrada fechar.
 for (let line = streaming ? await nextLine() : null; line !== null; line = await nextLine()) {

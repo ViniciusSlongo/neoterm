@@ -1,7 +1,7 @@
-import { and, asc, eq, lte } from "drizzle-orm";
+import { and, asc, eq, inArray, lte } from "drizzle-orm";
 import type { Core } from "../core.ts";
 import { errorMessage } from "../db/client.ts";
-import { followups, routines, runs } from "../db/schema.ts";
+import { followups, messages, routines, runs } from "../db/schema.ts";
 import type { RoutineRunner } from "./runner.ts";
 import { nextOccurrence } from "./schedule.ts";
 
@@ -114,6 +114,18 @@ export class Scheduler {
 /** Ao ligar: o que estava rodando quando o motor parou não vai terminar. */
 export async function closeInterruptedWork(core: Core): Promise<void> {
   const now = core.now();
+  // Subagentes das execuções interrompidas pararam junto: não ficam "rodando" no histórico.
+  const interrupted = await core.db.select({ id: runs.id }).from(runs).where(eq(runs.status, "running"));
+  if (interrupted.length > 0) {
+    const affected = await core.db.select().from(messages).where(inArray(messages.runId, interrupted.map((run) => run.id)));
+    for (const message of affected) {
+      if (!message.parts.some((part) => part.type === "tool" && part.task?.status === "running")) continue;
+      const parts = message.parts.map((part) =>
+        part.type === "tool" && part.task?.status === "running" ? { ...part, task: { ...part.task, status: "stopped" as const } } : part,
+      );
+      await core.db.update(messages).set({ parts }).where(eq(messages.id, message.id));
+    }
+  }
   await core.db
     .update(runs)
     .set({ status: "failed", error: "o motor parou no meio desta execução", finishedAt: now })

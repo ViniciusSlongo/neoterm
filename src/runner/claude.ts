@@ -60,9 +60,12 @@ export type PlanUsage = {
 
 export type ClaudeEvent =
   | { type: "init"; sessionId: string; model: string }
-  | { type: "text"; text: string }
-  | { type: "tool"; id: string; name: string; detail: string }
-  | { type: "tool_result"; id: string; error?: string }
+  /** `parent`: veio de um subagente (a ferramenta Agent que o lançou), não do agente. */
+  | { type: "text"; text: string; parent?: string }
+  | { type: "tool"; id: string; name: string; detail: string; parent?: string; background?: boolean }
+  | { type: "tool_result"; id: string; error?: string; parent?: string }
+  /** Uma tarefa em segundo plano (um subagente, ou um comando longo) começou, avançou ou terminou. */
+  | { type: "task"; phase: "started" | "progress" | "done"; toolUseId: string; description?: string; status?: string; summary?: string }
   | { type: "plan_usage"; usage: PlanUsage }
   /** A sessão foi compactada (pelo autocompact) para caber na janela do modelo. */
   | { type: "compacted" }
@@ -79,25 +82,43 @@ export type ClaudeEvent =
  */
 export class TurnInput {
   #write: ((text: string) => void) | null = null;
+  #end: (() => void) | null = null;
   #closed = false;
+  #finished = false;
+  /** Aceita mensagens novas no meio (só a conversa com a pessoa). */
+  readonly injectable: boolean;
   /** Mandadas e ainda não lidas pelo agente, na ordem. */
   readonly pending: string[] = [];
 
+  constructor(options: { injectable?: boolean } = {}) {
+    this.injectable = options.injectable ?? true;
+  }
+
   /** Liga a um processo do claude; as que esperam (de um processo que caiu) vão de novo. */
-  attach(write: (text: string) => void): void {
+  attach(write: (text: string) => void, end: () => void): void {
     this.#write = write;
+    this.#end = end;
     for (const text of this.pending) write(text);
+    if (this.#finished) end();
   }
 
   /** Manda uma mensagem para o turno; `false` se ele já terminou (aí ela vai para a fila normal). */
   send(text: string): boolean {
-    if (this.#closed) return false;
+    if (this.#closed || !this.injectable) return false;
     this.pending.push(text);
     this.#write?.(text);
     return true;
   }
 
-  /** Fecha: não aceita mais nada. Devolve as que não chegaram a ser lidas. */
+  /** O agente está parado e nada mais vai chegar: fecha a entrada, e o Claude Code termina e sai. */
+  finish(): void {
+    if (this.#finished) return;
+    this.#finished = true;
+    this.#closed = true;
+    this.#end?.();
+  }
+
+  /** Não aceita mais nada. Devolve as que não chegaram a ser lidas. */
   close(): string[] {
     this.#closed = true;
     return this.pending.splice(0);
@@ -204,16 +225,31 @@ export async function* runClaude(turn: ClaudeTurn): AsyncGenerator<ClaudeEvent> 
   });
   child.stdin.on("error", () => {});
   child.stdin.write(userLine(turn.prompt));
-  // Sem `input`, ninguém manda mais nada: a entrada fecha e ele termina ao responder.
+  // Fechada a entrada, ele termina o que falta e sai. Se não sair (um comando em segundo plano que
+  // não acaba, como um servidor), sai à força depois de um tempo.
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  const end = () => {
+    child.stdin.end();
+    grace ??= setTimeout(() => child.kill(), EXIT_GRACE_MS);
+  };
+  // Sem `input`, ninguém manda mais nada: a entrada fecha já (ele ainda espera os subagentes).
   const input = turn.input;
-  if (input) input.attach((text) => child.stdin.write(userLine(text)));
-  else child.stdin.end();
+  if (input) input.attach((text) => child.stdin.write(userLine(text)), end);
+  else end();
+  // Sem nada no fluxo por muito tempo (um subagente travado), desiste.
+  let idle: ReturnType<typeof setTimeout> | undefined;
+  const awake = () => {
+    if (idle) clearTimeout(idle);
+    idle = setTimeout(() => child.kill(), IDLE_LIMIT_MS);
+  };
+  awake();
 
   let started = false;
   let finished = false;
   let openingEcho = true;
   try {
     for await (const line of createInterface({ input: child.stdout })) {
+      awake();
       if (!line.trim()) continue;
       let message: unknown;
       try {
@@ -224,22 +260,19 @@ export async function* runClaude(turn: ClaudeTurn): AsyncGenerator<ClaudeEvent> 
       for (const event of toEvents(message, turn.cwd)) {
         if (event.type === "init") started = true;
         if (event.type === "replay") {
-          // O primeiro eco é a mensagem que abriu o turno; os outros, as mandadas depois.
-          if (openingEcho) {
+          // O eco da mensagem que abriu o turno; depois, o das mandadas no meio. Outros ecos (um
+          // aviso que o próprio Claude Code pôs na fila) não são de ninguém.
+          if (openingEcho && event.text === turn.prompt) {
             openingEcho = false;
             continue;
           }
-          const text = input?.pending.shift() ?? event.text;
-          yield { type: "injected", text };
+          const at = input ? input.pending.indexOf(event.text) : -1;
+          if (at >= 0) yield { type: "injected", text: input!.pending.splice(at, 1)[0]! };
           continue;
         }
-        if (event.type === "result") {
-          // Ainda há mensagem mandada e não lida (ou um turno na fila dele): a resposta continua.
-          if (input && (input.pending.length > 0 || (event.queued ?? 0) > 0)) continue;
-          input?.close();
-          child.stdin.end();
-          finished = true;
-        }
+        // Não para na primeira resposta: com subagentes em segundo plano, ele segue trabalhando e
+        // responde de novo quando eles terminam. Quem decide que acabou é quem lê (input.finish).
+        if (event.type === "result") finished = true;
         yield event;
       }
     }
@@ -257,9 +290,19 @@ export async function* runClaude(turn: ClaudeTurn): AsyncGenerator<ClaudeEvent> 
       );
     }
   } finally {
+    if (grace) clearTimeout(grace);
+    if (idle) clearTimeout(idle);
     if (child.exitCode === null && !child.killed) child.kill();
   }
 }
+
+/** Depois de fechar a entrada, quanto ele tem para sair sozinho. */
+const EXIT_GRACE_MS = 15_000;
+/** Sem nenhuma linha no fluxo por tanto tempo, ele é encerrado. */
+const IDLE_LIMIT_MS = 20 * 60_000;
+
+/** As ferramentas que lançam um subagente. */
+export const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
 
 function spawnFailure(error: unknown): string {
   if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
@@ -280,6 +323,11 @@ function contentOf(message: Json): Json[] {
   return inner.content.filter(isRecord);
 }
 
+/** De qual subagente veio a mensagem (`parent_tool_use_id`), se veio de um. */
+function parentOf(message: Json): { parent?: string } {
+  return typeof message.parent_tool_use_id === "string" && message.parent_tool_use_id ? { parent: message.parent_tool_use_id } : {};
+}
+
 /** Uma linha do stream-json do Claude Code, traduzida no que o neoterm mostra e guarda. */
 export function* toEvents(message: unknown, cwd: string): Generator<ClaudeEvent> {
   if (!isRecord(message)) return;
@@ -289,17 +337,33 @@ export function* toEvents(message: unknown, cwd: string): Generator<ClaudeEvent>
         yield { type: "init", sessionId: message.session_id, model: String(message.model ?? "") };
       }
       if (message.subtype === "compact_boundary") yield { type: "compacted" };
-      return;
-    case "assistant":
-      for (const block of contentOf(message)) {
-        if (block.type === "text" && typeof block.text === "string" && block.text.trim()) {
-          yield { type: "text", text: block.text };
-        } else if (block.type === "tool_use") {
-          const name = String(block.name ?? "ferramenta");
-          yield { type: "tool", id: String(block.id ?? ""), name, detail: describeToolInput(name, block.input, cwd) };
+      if (typeof message.tool_use_id === "string" && typeof message.subtype === "string") {
+        const phase = { task_started: "started", task_progress: "progress", task_notification: "done" }[message.subtype];
+        if (phase) {
+          yield {
+            type: "task",
+            phase: phase as "started" | "progress" | "done",
+            toolUseId: message.tool_use_id,
+            ...(typeof message.description === "string" ? { description: message.description } : {}),
+            ...(typeof message.status === "string" ? { status: message.status } : {}),
+            ...(typeof message.summary === "string" ? { summary: message.summary } : {}),
+          };
         }
       }
       return;
+    case "assistant": {
+      const parent = parentOf(message);
+      for (const block of contentOf(message)) {
+        if (block.type === "text" && typeof block.text === "string" && block.text.trim()) {
+          yield { type: "text", text: block.text, ...parent };
+        } else if (block.type === "tool_use") {
+          const name = String(block.name ?? "ferramenta");
+          const background = SUBAGENT_TOOLS.has(name) && isRecord(block.input) && block.input.run_in_background === true;
+          yield { type: "tool", id: String(block.id ?? ""), name, detail: describeToolInput(name, block.input, cwd), ...parent, ...(background ? { background } : {}) };
+        }
+      }
+      return;
+    }
     case "user":
       if (message.isReplay === true) {
         const inner = isRecord(message.message) ? message.message.content : undefined;
@@ -316,8 +380,8 @@ export function* toEvents(message: unknown, cwd: string): Generator<ClaudeEvent>
         if (block.type !== "tool_result") continue;
         const id = String(block.tool_use_id ?? "");
         yield block.is_error === true
-          ? { type: "tool_result", id, error: firstLine(resultText(block.content)) }
-          : { type: "tool_result", id };
+          ? { type: "tool_result", id, error: firstLine(resultText(block.content)), ...parentOf(message) }
+          : { type: "tool_result", id, ...parentOf(message) };
       }
       return;
     case "rate_limit_event": {

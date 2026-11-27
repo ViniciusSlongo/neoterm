@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { SubagentTask } from "./db/schema.ts";
 import type { PlanUsage } from "./runner/claude.ts";
 
 /*
@@ -13,7 +14,9 @@ export type Scope = { kind: "agent"; slug: string } | { kind: "group"; slug: str
 export type TurnEvent =
   | { type: "start"; agent: string; runId: string }
   | { type: "text"; text: string }
-  | { type: "tool"; name: string; detail: string }
+  | { type: "tool"; name: string; detail: string; id?: string; task?: SubagentTask }
+  /** Um subagente da resposta em andamento (a ferramenta `id`) avançou ou terminou. */
+  | { type: "task"; id: string; task: SubagentTask }
   | { type: "tool_error"; name: string; error: string }
   /** Ele leu uma mensagem mandada no meio do turno: o que já fez foi para a conversa e recomeça. */
   | { type: "flush" }

@@ -3,11 +3,11 @@ import { type AgentDefinition, listAgents } from "../agents/identity.ts";
 import { buildSystemPrompt, type RunMode } from "../agents/prompt.ts";
 import { readSettings } from "../config.ts";
 import { type Database, errorMessage } from "../db/client.ts";
-import { type MessagePart, messages, type RunTrigger, runs } from "../db/schema.ts";
+import { type MessagePart, messages, type RunTrigger, runs, type SubagentTask } from "../db/schema.ts";
 import type { EventBus, Scope, TurnEvent } from "../events.ts";
 import type { McpHub } from "../mcp/hub.ts";
 import type { AgentRow } from "../store/conversations.ts";
-import { ClaudeError, type ClaudeTurn, runClaude, TurnInput } from "./claude.ts";
+import { ClaudeError, type ClaudeTurn, runClaude, SUBAGENT_TOOLS, TurnInput } from "./claude.ts";
 
 export type { TurnEvent } from "../events.ts";
 
@@ -174,20 +174,11 @@ export class TurnEngine {
           })
         : undefined;
     const started = Date.now();
-    const parts: MessagePart[] = [];
-    // Só a conversa com a pessoa aceita mensagens no meio do turno.
-    const input = spec.trigger === "chat" ? new TurnInput() : undefined;
-    if (input) this.#inputs.set(spec.conversationId, input);
-    // Ele leu uma mensagem nova: o que fez até aqui vira uma resposta, a mensagem entra depois dela,
-    // e o resto do turno segue numa resposta nova.
-    const onInjected = async (text: string) => {
-      if (parts.length > 0) {
-        await db.insert(messages).values({ conversationId: spec.conversationId, runId: run.id, author: "agent", agentId: spec.agentRow.id, text: lastText(parts), parts: parts.splice(0) });
-      }
-      await db.insert(messages).values({ conversationId: spec.conversationId, author: "person", text });
-      this.#bus.changed("messages", spec.scope);
-      emit({ type: "flush" });
-    };
+    // A entrada fica aberta enquanto ele trabalha (inclusive com subagentes em segundo plano). Só a
+    // conversa com a pessoa aceita mensagens novas no meio.
+    const input = new TurnInput({ injectable: spec.trigger === "chat" });
+    if (input.injectable) this.#inputs.set(spec.conversationId, input);
+    const recorder = new TurnRecorder({ db, bus: this.#bus, spec, runId: run.id, emit });
     try {
       const base: Omit<ClaudeTurn, "sessionId" | "resume"> = {
         prompt: spec.prompt,
@@ -206,76 +197,46 @@ export class TurnEngine {
         }),
         addDirs: extraDirs(spec.agent, spec.cwd),
         ...(token && mcpUrl ? { mcp: { url: mcpUrl, token } } : {}),
-        ...(input ? { input } : {}),
+        input,
       };
-      let resultText: string;
-      const outcome: StreamOutcome = {};
       const fresh = () => crypto.randomUUID();
       if (spec.session.id) {
         try {
-          resultText = await this.#stream({ ...base, sessionId: spec.session.id, resume: true }, parts, emit, outcome, onInjected);
+          await this.#stream({ ...base, sessionId: spec.session.id, resume: true }, recorder, input);
         } catch (error) {
           // A sessão guardada sumiu (alguém apagou o histórico do Claude Code): começa outra.
           if (!(error instanceof ClaudeError && !error.started)) throw error;
           const id = fresh();
           await spec.session.save(id);
-          resultText = await this.#stream({ ...base, sessionId: id, resume: false }, parts, emit, outcome, onInjected);
+          await this.#stream({ ...base, sessionId: id, resume: false }, recorder, input);
         }
       } else {
         const id = fresh();
         await spec.session.save(id);
-        resultText = await this.#stream({ ...base, sessionId: id, resume: false }, parts, emit, outcome, onInjected);
+        await this.#stream({ ...base, sessionId: id, resume: false }, recorder, input);
       }
-      // O Claude Code compactou a sessão: fica dito na conversa, antes da resposta.
-      if (outcome.compacted) {
-        await db.insert(messages).values({
-          conversationId: spec.conversationId,
-          author: "system",
-          text: `${slug} compactou o contexto da conversa para continuar (o histórico na tela continua; ele guarda um resumo).`,
-          meta: { notice: "compacted" },
-        });
-      }
-      const text = resultText || lastText(parts);
+      // O que ele fez depois da última resposta (o processo terminou sem fechar a fala).
+      await recorder.saveResponse();
+      await recorder.end();
+      const last = recorder.responses.at(-1);
       const durationMs = Date.now() - started;
-      const [message] = await db
-        .insert(messages)
-        .values({
-          conversationId: spec.conversationId,
-          runId: run.id,
-          author: "agent",
-          agentId: spec.agentRow.id,
-          text,
-          parts,
-          meta: { ...(spec.routineId ? { routineId: spec.routineId } : {}), ...(outcome.context ? { context: outcome.context } : {}) },
-        })
-        .returning({ id: messages.id });
       await db.update(runs).set({ status: "succeeded", durationMs, finishedAt: new Date() }).where(eq(runs.id, run.id));
-      this.#bus.changed("messages", spec.scope);
-      emit({ type: "done", messageId: message?.id ?? "", durationMs });
-      return { ok: true, text, runId: run.id, ...(message ? { messageId: message.id } : {}) };
+      emit({ type: "done", messageId: last?.messageId ?? "", durationMs });
+      return { ok: true, text: last?.text ?? "", runId: run.id, ...(last ? { messageId: last.messageId } : {}) };
     } catch (error) {
       const reason = errorMessage(error);
       await db
         .update(runs)
         .set({ status: "failed", error: reason, durationMs: Date.now() - started, finishedAt: new Date() })
         .where(eq(runs.id, run.id));
-      if (parts.length > 0) {
-        await db.insert(messages).values({
-          conversationId: spec.conversationId,
-          runId: run.id,
-          author: "agent",
-          agentId: spec.agentRow.id,
-          text: lastText(parts),
-          parts,
-        });
-        this.#bus.changed("messages", spec.scope);
-      }
+      await recorder.saveResponse().catch(() => {});
+      await recorder.end().catch(() => {});
       emit({ type: "error", message: reason });
-      const leftover = input?.close() ?? [];
-      return { ok: false, text: lastText(parts), error: reason, runId: run.id, ...(leftover.length ? { leftover } : {}) };
+      const leftover = input.close();
+      return { ok: false, text: recorder.responses.at(-1)?.text ?? "", error: reason, runId: run.id, ...(leftover.length ? { leftover } : {}) };
     } finally {
-      input?.close();
-      if (input && this.#inputs.get(spec.conversationId) === input) this.#inputs.delete(spec.conversationId);
+      input.close();
+      if (this.#inputs.get(spec.conversationId) === input) this.#inputs.delete(spec.conversationId);
       if (token) this.#hub?.revoke(token);
       const left = (this.#running.get(slug) ?? 1) - 1;
       if (left > 0) this.#running.set(slug, left);
@@ -284,56 +245,270 @@ export class TurnEngine {
     }
   }
 
-  /** Roda o Claude Code e junta o que ele fez em `parts`. Devolve o texto final. */
-  async #stream(
-    turn: ClaudeTurn,
-    parts: MessagePart[],
-    emit: (event: TurnEvent) => void,
-    outcome: StreamOutcome,
-    onInjected: (text: string) => Promise<void>,
-  ): Promise<string> {
-    const toolIndex = new Map<string, number>();
-    for await (const event of runClaude(turn)) {
-      switch (event.type) {
-        case "text":
-          parts.push({ type: "text", text: event.text });
-          emit(event);
-          break;
-        case "tool":
-          toolIndex.set(event.id, parts.length);
-          parts.push({ type: "tool", name: event.name, detail: event.detail });
-          emit({ type: "tool", name: event.name, detail: event.detail });
-          break;
-        case "tool_result": {
-          const part = parts[toolIndex.get(event.id) ?? -1];
-          if (event.error && part?.type === "tool") {
-            part.error = event.error;
-            emit({ type: "tool_error", name: part.name, error: event.error });
+  /**
+   * Roda o Claude Code até ele sair, passando o que ele faz para o `recorder`. Cada vez que o agente
+   * termina de falar, a resposta vira uma mensagem. Ele está parado (sem subagente rodando nem
+   * mensagem na fila): a entrada fecha e o processo sai.
+   */
+  async #stream(turn: ClaudeTurn, recorder: TurnRecorder, input: TurnInput): Promise<void> {
+    let idle = false;
+    let queued = 0;
+    // Um subagente terminou com o agente parado: o Claude Code acorda o agente para continuar. Se não
+    // acordar em 2 minutos, acabou.
+    let wake: ReturnType<typeof setTimeout> | undefined;
+    const settle = () => {
+      if (!idle) return;
+      if (input.pending.length === 0 && queued === 0 && recorder.runningTasks === 0) input.finish();
+    };
+    try {
+      for await (const event of runClaude(turn)) {
+        switch (event.type) {
+          case "init":
+            if (wake) clearTimeout(wake);
+            idle = false;
+            await recorder.onInit();
+            break;
+          case "text":
+            recorder.onText(event);
+            break;
+          case "tool":
+            recorder.onTool(event);
+            break;
+          case "tool_result":
+            recorder.onToolResult(event);
+            break;
+          case "task": {
+            const before = recorder.runningTasks;
+            recorder.onTask(event);
+            if (idle && before > 0 && recorder.runningTasks === 0) {
+              if (wake) clearTimeout(wake);
+              wake = setTimeout(() => input.finish(), FOLLOW_UP_WAIT_MS);
+            }
+            break;
           }
-          break;
+          case "plan_usage":
+            this.#bus.emit({ type: "plan_usage", usage: event.usage });
+            break;
+          case "compacted":
+            recorder.compacted();
+            break;
+          case "injected":
+            idle = false;
+            await recorder.onInjected(event.text);
+            break;
+          case "result":
+            if (!event.ok) throw new Error(event.text || "o Claude não terminou a resposta");
+            await recorder.saveResponse(event.text, event.context);
+            idle = true;
+            queued = event.queued ?? 0;
+            settle();
+            break;
         }
-        case "plan_usage":
-          this.#bus.emit({ type: "plan_usage", usage: event.usage });
-          break;
-        case "compacted":
-          outcome.compacted = true;
-          break;
-        case "injected":
-          await onInjected(event.text);
-          toolIndex.clear();
-          break;
-        case "result":
-          if (!event.ok) throw new Error(event.text || "o Claude não terminou a resposta");
-          if (event.context) outcome.context = event.context;
-          return event.text;
       }
+    } finally {
+      if (wake) clearTimeout(wake);
     }
-    return lastText(parts);
   }
 }
 
-/** O que o turno soube além do texto: o contexto ao terminar e se compactou no caminho. */
-type StreamOutcome = { context?: { used: number; window: number }; compacted?: boolean };
+/** Depois que o último subagente termina com o agente parado, quanto se espera ele voltar a falar. */
+const FOLLOW_UP_WAIT_MS = 2 * 60_000;
+
+type ToolPart = Extract<MessagePart, { type: "tool" }>;
+
+/**
+ * O que o agente faz num processo do Claude Code: as respostas (uma por vez que ele termina de
+ * falar), as ferramentas e os subagentes. As ações dos subagentes não entram na resposta: contam no
+ * subagente, que segue atualizado no banco mesmo depois que a resposta dele foi guardada.
+ */
+class TurnRecorder {
+  /** A resposta em andamento. */
+  parts: MessagePart[] = [];
+  /** As respostas guardadas, na ordem. */
+  readonly responses: { messageId: string; text: string }[] = [];
+  readonly #db: Database;
+  readonly #bus: EventBus;
+  readonly #spec: TurnSpec;
+  readonly #runId: string;
+  readonly #emit: (event: TurnEvent) => void;
+  /** As ferramentas da resposta em andamento, pelo id. */
+  readonly #tools = new Map<string, ToolPart>();
+  /** Os subagentes, pelo id da ferramenta Agent que os lançou. */
+  readonly #tasks = new Map<string, { part: ToolPart; messageId?: string }>();
+  /** Subagentes lançados por subagentes: contam no de cima. */
+  readonly #nested = new Map<string, string>();
+  /** As partes de cada resposta guardada, para atualizar os subagentes dela. */
+  readonly #saved = new Map<string, MessagePart[]>();
+  readonly #dirty = new Set<string>();
+  #flushing: ReturnType<typeof setTimeout> | undefined;
+  #compacted = false;
+  #sawInit = false;
+
+  constructor(options: { db: Database; bus: EventBus; spec: TurnSpec; runId: string; emit: (event: TurnEvent) => void }) {
+    this.#db = options.db;
+    this.#bus = options.bus;
+    this.#spec = options.spec;
+    this.#runId = options.runId;
+    this.#emit = options.emit;
+  }
+
+  /** Quantos subagentes ainda trabalham. */
+  get runningTasks(): number {
+    let count = 0;
+    for (const { part } of this.#tasks.values()) if (part.task?.status === "running") count++;
+    return count;
+  }
+
+  /** Um turno novo dele começou (o Claude Code o acordou): o que sobrou da fala anterior é uma resposta. */
+  async onInit(): Promise<void> {
+    if (this.#sawInit) await this.saveResponse();
+    this.#sawInit = true;
+  }
+
+  onText(event: { text: string; parent?: string }): void {
+    if (event.parent) {
+      // A fala de um subagente não é a resposta do agente.
+      const top = this.#top(event.parent);
+      if (top) this.#update(top, (task) => ({ ...task, last: firstLine(event.text) }));
+      return;
+    }
+    this.parts.push({ type: "text", text: event.text });
+    this.#emit({ type: "text", text: event.text });
+  }
+
+  onTool(event: { id: string; name: string; detail: string; parent?: string; background?: boolean }): void {
+    if (event.parent) {
+      const top = this.#top(event.parent);
+      if (!top) return;
+      if (SUBAGENT_TOOLS.has(event.name)) this.#nested.set(event.id, top);
+      this.#update(top, (task) => ({ ...task, actions: task.actions + 1, last: event.detail ? `${event.name} ${event.detail}` : event.name }));
+      return;
+    }
+    const part: ToolPart = { type: "tool", id: event.id, name: event.name, detail: event.detail };
+    if (SUBAGENT_TOOLS.has(event.name)) {
+      part.task = { status: "running", actions: 0, ...(event.background ? { background: true } : {}) };
+      this.#tasks.set(event.id, { part });
+    }
+    this.#tools.set(event.id, part);
+    this.parts.push(part);
+    this.#emit({ type: "tool", id: event.id, name: part.name, detail: part.detail, ...(part.task ? { task: { ...part.task } } : {}) });
+  }
+
+  onToolResult(event: { id: string; error?: string; parent?: string }): void {
+    if (event.parent) return;
+    const part = this.#tools.get(event.id);
+    if (part && event.error) {
+      part.error = event.error;
+      this.#emit({ type: "tool_error", name: part.name, error: event.error });
+    }
+    // Um subagente que não é de segundo plano termina quando a ferramenta devolve.
+    const task = this.#tasks.get(event.id)?.part.task;
+    if (!task || task.status !== "running") return;
+    if (event.error) this.#update(event.id, (current) => ({ ...current, status: "failed" }));
+    else if (!task.background) this.#update(event.id, (current) => ({ ...current, status: "completed" }));
+  }
+
+  onTask(event: { phase: "started" | "progress" | "done"; toolUseId: string; description?: string; status?: string; summary?: string }): void {
+    // Só os subagentes do agente; as tarefas de dentro deles (e os comandos longos) não contam.
+    if (!this.#tasks.has(event.toolUseId)) return;
+    if (event.phase === "started") return this.#update(event.toolUseId, (task) => ({ ...task, status: "running", background: true }));
+    if (event.phase === "progress") return this.#update(event.toolUseId, (task) => (event.description ? { ...task, last: event.description } : task));
+    const status = event.status === "completed" ? "completed" : event.status === "failed" ? "failed" : "stopped";
+    this.#update(event.toolUseId, (task) => ({ ...task, status, ...(event.summary ? { summary: event.summary } : {}) }));
+  }
+
+  compacted(): void {
+    this.#compacted = true;
+  }
+
+  /** Ele leu uma mensagem mandada no meio: o que fez até aqui vira uma resposta, e a mensagem entra depois. */
+  async onInjected(text: string): Promise<void> {
+    await this.saveResponse();
+    await this.#db.insert(messages).values({ conversationId: this.#spec.conversationId, author: "person", text });
+    this.#bus.changed("messages", this.#spec.scope);
+    this.#emit({ type: "flush" });
+  }
+
+  /** Guarda a resposta em andamento (uma fala vazia, como a de um aviso interno, não vira mensagem). */
+  async saveResponse(resultText?: string, context?: { used: number; window: number }): Promise<void> {
+    const text = resultText?.trim() ? resultText : lastText(this.parts);
+    if (this.parts.length === 0 && !text) return;
+    const spec = this.#spec;
+    if (this.#compacted) {
+      this.#compacted = false;
+      await this.#db.insert(messages).values({
+        conversationId: spec.conversationId,
+        author: "system",
+        text: `${spec.agent.slug} compactou o contexto da conversa para continuar (o histórico na tela continua; ele guarda um resumo).`,
+        meta: { notice: "compacted" },
+      });
+    }
+    const parts = this.parts;
+    this.parts = [];
+    this.#tools.clear();
+    const [message] = await this.#db
+      .insert(messages)
+      .values({
+        conversationId: spec.conversationId,
+        runId: this.#runId,
+        author: "agent",
+        agentId: spec.agentRow.id,
+        text,
+        parts,
+        meta: { ...(spec.routineId ? { routineId: spec.routineId } : {}), ...(context ? { context } : {}) },
+      })
+      .returning({ id: messages.id });
+    if (!message) return;
+    this.#saved.set(message.id, parts);
+    for (const entry of this.#tasks.values()) if (parts.includes(entry.part)) entry.messageId = message.id;
+    this.responses.push({ messageId: message.id, text });
+    this.#bus.changed("messages", spec.scope);
+    this.#emit({ type: "flush" });
+  }
+
+  /** O processo acabou: subagente que ainda "rodava" parou junto. Grava o que falta. */
+  async end(): Promise<void> {
+    for (const [id, entry] of this.#tasks) {
+      if (entry.part.task?.status === "running") this.#update(id, (task) => ({ ...task, status: "stopped" }));
+    }
+    await this.#flush();
+  }
+
+  /** O subagente de cima de um id (o próprio, ou o que lançou um subagente de dentro). */
+  #top(id: string): string | undefined {
+    if (this.#tasks.has(id)) return id;
+    return this.#nested.get(id);
+  }
+
+  #update(id: string, change: (task: SubagentTask) => SubagentTask): void {
+    const entry = this.#tasks.get(id);
+    if (!entry?.part.task) return;
+    entry.part.task = change(entry.part.task);
+    if (entry.messageId) {
+      // Já guardado: atualiza a mensagem no banco, juntando as mudanças de meio segundo.
+      this.#dirty.add(entry.messageId);
+      this.#flushing ??= setTimeout(() => void this.#flush(), 500);
+    } else {
+      this.#emit({ type: "task", id, task: { ...entry.part.task } });
+    }
+  }
+
+  async #flush(): Promise<void> {
+    if (this.#flushing) clearTimeout(this.#flushing);
+    this.#flushing = undefined;
+    const ids = [...this.#dirty];
+    this.#dirty.clear();
+    for (const id of ids) {
+      const parts = this.#saved.get(id);
+      if (parts) await this.#db.update(messages).set({ parts }).where(eq(messages.id, id));
+    }
+    if (ids.length > 0) this.#bus.changed("messages", this.#spec.scope);
+  }
+}
+
+function firstLine(text: string): string {
+  return text.trim().split("\n")[0]?.trim() ?? "";
+}
 
 export function lastText(parts: MessagePart[]): string {
   for (let index = parts.length - 1; index >= 0; index--) {

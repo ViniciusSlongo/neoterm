@@ -223,7 +223,11 @@ function renderTurnEvent(event: TurnEvent, who?: string): boolean {
       console.log(`\n${fail(event.message)}`);
       return true;
     case "flush":
-      // Uma mensagem nova entrou no meio da resposta (mandada pela interface): a resposta segue.
+      // Uma resposta foi guardada (ou uma mensagem nova entrou no meio): ele segue trabalhando.
+      return false;
+    case "task":
+      // Um subagente terminou: uma linha; o andamento dele não vai para o terminal.
+      if (event.task.status !== "running") console.log(`  ${event.task.status === "completed" ? green("✓") : red("✗")} ${muted(`subagente ${event.task.status === "completed" ? "terminou" : "parou"}`)}`);
       return false;
   }
 }
